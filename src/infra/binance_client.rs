@@ -17,19 +17,22 @@ use crate::state::snapshot_store::SharedSnapshotStore;
 
 const WS_URL: &str = "wss://stream.binance.com:9443/stream";
 
-// Payload z Binance individual symbol ticker stream (@ticker)
+// Payload z Binance combined stream (@ticker)
 // https://binance-docs.github.io/apidocs/spot/en/#individual-symbol-ticker-streams
 #[derive(Debug, Deserialize)]
 struct BinanceCombinedMessage {
+    stream: String,
     data: BinanceTickerData,
 }
 
 #[derive(Debug, Deserialize)]
 struct BinanceTickerData {
+    // ostatnia cena transakcji
     #[serde(rename = "c")]
     last_price: String,
-    #[serde(rename = "T")]
-    close_time: u64,
+    // czas zdarzenia w ms od epoch — pole "E", nie "T" (błąd pierwotny)
+    #[serde(rename = "E", default)]
+    event_time: u64,
 }
 
 pub async fn run(
@@ -151,45 +154,18 @@ fn process_message(
     let msg: BinanceCombinedMessage = serde_json::from_str(text)?;
     let price: f64 = msg.data.last_price.parse()?;
 
-    let exchange_ts: Option<DateTime<Utc>> = if msg.data.close_time > 0 {
-        Utc.timestamp_millis_opt(msg.data.close_time as i64).single()
+    let exchange_ts: Option<DateTime<Utc>> = if msg.data.event_time > 0 {
+        Utc.timestamp_millis_opt(msg.data.event_time as i64).single()
     } else {
         None
     };
 
-    // Dopasowanie symbolu na podstawie streamu — Binance zwraca dane per stream,
-    // ale w combined stream nie ma jawnego pola z nazwą symbolu w BinanceTickerData,
-    // więc identyfikujemy po cenie względem subskrybowanych symboli.
-    // W praktyce Binance combined stream zawiera pole "stream" na poziomie root.
-    let symbol = match_symbol_from_combined(text, symbols)?;
+    let symbol = symbols
+        .iter()
+        .find(|&&s| s.binance_stream() == msg.stream.as_str())
+        .copied()
+        .ok_or_else(|| format!("unknown stream: {}", msg.stream))?;
 
     store.update_snapshot(Exchange::Binance, symbol, price, exchange_ts);
     Ok(())
-}
-
-fn match_symbol_from_combined(
-    text: &str,
-    symbols: &[Symbol],
-) -> Result<Symbol, Box<dyn std::error::Error>> {
-    // Parsujemy tylko pole "stream" żeby uniknąć podwójnego parsowania całego JSON
-    #[derive(Deserialize)]
-    struct StreamWrapper {
-        stream: String,
-    }
-    let wrapper: StreamWrapper = serde_json::from_str(text)?;
-
-    for &symbol in symbols {
-        if wrapper.stream.starts_with(&symbol.binance_stream()[..wrapper.stream.find('@').unwrap_or(wrapper.stream.len())]) {
-            return Ok(symbol);
-        }
-    }
-
-    // Dopasowanie przez pełną nazwę streamu
-    for &symbol in symbols {
-        if wrapper.stream == symbol.binance_stream() {
-            return Ok(symbol);
-        }
-    }
-
-    Err(format!("unknown stream: {}", wrapper.stream).into())
 }
