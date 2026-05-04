@@ -1,0 +1,18 @@
+http:
+  port: 8080
+
+exchanges:
+  enabled:
+    - binance
+    - mexc
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+websocket:
+  reconnect_backoff_ms: 1000
+  reconnect_max_attempts: 10
+
+store:
+  stale_threshold_ms: 10000

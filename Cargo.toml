@@ -34,3 +34,6 @@ config = "0.14"
 
 # decimal arithmetic — gotowe na post-MVP migrację z f64 (patrz SPEC sekcja 10.2)
 rust_decimal = { version = "1", features = ["serde-float"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
