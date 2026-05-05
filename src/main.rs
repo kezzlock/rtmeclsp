@@ -100,6 +100,7 @@ async fn main() {
         store: Arc::clone(&store),
         tera: Arc::new(tera),
         prometheus_handle,
+        enabled_exchanges: cfg.exchanges.enabled.clone(),
     };
 
     let router = api::routes::router(app_state);

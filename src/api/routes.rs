@@ -34,6 +34,7 @@ pub struct AppState {
     pub store: SharedSnapshotStore,
     pub tera: Arc<Tera>,
     pub prometheus_handle: PrometheusHandle,
+    pub enabled_exchanges: Vec<String>,
 }
 
 impl FromRef<AppState> for SharedSnapshotStore {
@@ -53,8 +54,6 @@ pub fn router(state: AppState) -> Router {
         .route("/events", get(events))
         .with_state(state)
 }
-
-// ── Tera context types (f64 — Tera can't render Decimal natively) ─────────────
 
 #[derive(Serialize)]
 struct PivotContext {
@@ -86,14 +85,18 @@ fn to_f64(d: Decimal) -> f64 {
     d.to_f64().unwrap_or(0.0)
 }
 
-fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
-    let mut exchanges: Vec<String> = snapshot
-        .symbols
-        .iter()
-        .flat_map(|s| s.entries.iter().map(|e| e.exchange.clone()))
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
+fn build_pivot(snapshot: &SnapshotResponse, enabled: Option<&[String]>) -> PivotContext {
+    let mut exchanges: Vec<String> = if let Some(e) = enabled {
+        e.to_vec()
+    } else {
+        snapshot
+            .symbols
+            .iter()
+            .flat_map(|s| s.entries.iter().map(|e| e.exchange.clone()))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect()
+    };
     exchanges.sort();
 
     let rows = snapshot
@@ -144,16 +147,16 @@ fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
         })
         .collect();
 
-    PivotContext { 
-        exchanges, 
-        rows, 
-        volume: snapshot.volume 
+    PivotContext {
+        exchanges,
+        rows,
+        volume: snapshot.volume,
     }
 }
 
 async fn index(State(state): State<AppState>) -> impl IntoResponse {
     let data = build_snapshot_response(&state.store, ALL_SYMBOLS, Decimal::ZERO);
-    let pivot = build_pivot(&data);
+    let pivot = build_pivot(&data, Some(&state.enabled_exchanges));
     let mut ctx = tera::Context::new();
     ctx.insert("exchanges", &pivot.exchanges);
     ctx.insert("rows", &pivot.rows);
@@ -180,7 +183,7 @@ async fn events(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let interval = tokio::time::interval(Duration::from_millis(500));
     let volume = Decimal::from_f64_retain(query.volume.unwrap_or(0.0)).unwrap_or(Decimal::ZERO);
-    
+
     let stream = tokio_stream::wrappers::IntervalStream::new(interval).map(move |_| {
         let data = build_snapshot_response(&store, ALL_SYMBOLS, volume);
         let json = serde_json::to_string(&data).unwrap_or_default();
@@ -273,14 +276,12 @@ async fn history(
     let mut all_entries: Vec<HistoryEntryDto> = symbols
         .iter()
         .flat_map(|&sym| store.get_history_for_symbol(sym, limit))
-        .map(|e| {
-            HistoryEntryDto {
-                exchange: e.exchange.as_str().to_string(),
-                price: to_f64(e.price),
-                received_ts: e.received_ts,
-                exchange_ts: e.exchange_ts,
-                latency_ms: e.latency_ms(),
-            }
+        .map(|e| HistoryEntryDto {
+            exchange: e.exchange.as_str().to_string(),
+            price: to_f64(e.price),
+            received_ts: e.received_ts,
+            exchange_ts: e.exchange_ts,
+            latency_ms: e.latency_ms(),
         })
         .collect();
 
@@ -328,7 +329,7 @@ pub fn build_snapshot_response(
                 .map(|s| {
                     let mut est_buy = None;
                     let mut est_sell = None;
-                    
+
                     // ZAWSZE próbujemy pobrać Bid/Ask z arkusza, nawet dla wolumenu 0
                     if let Some(ob) = store.get_order_book(s.exchange, symbol_enum) {
                         est_buy = ob.estimate_buy_price(volume).map(to_f64);

@@ -21,12 +21,7 @@ impl MexcAdapter {
     pub fn new(symbols: Vec<Symbol>) -> Self {
         let params: Vec<String> = symbols
             .iter()
-            .map(|s| {
-                format!(
-                    "spot@public.limit.depth.v3.api@{}@5",
-                    s.mexc_symbol()
-                )
-            })
+            .map(|s| format!("spot@public.limit.depth.v3.api@{}@5", s.mexc_symbol()))
             .collect();
 
         let sub = serde_json::json!({
@@ -56,8 +51,7 @@ impl WsAdapter for MexcAdapter {
 
     fn parse_message(&self, text: &str) -> Result<Vec<WsUpdate>, String> {
         let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("json: {e}"))?;
-        
-        // Sprawdzamy czy to wiadomość z danymi (musi mieć 'c', 'd', 't')
+
         let c = match v.get("c").and_then(|v| v.as_str()) {
             Some(c) => c,
             None => return Ok(vec![]),

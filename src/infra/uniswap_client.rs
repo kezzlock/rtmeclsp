@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use chrono::Utc;
 use ethers::prelude::*;
 use rust_decimal::Decimal;
-use tokio::time::{sleep, Duration, timeout};
+use std::sync::Arc;
+use tokio::time::{Duration, sleep, timeout};
 use tracing::{error, info, warn};
 
 use crate::domain::{
@@ -21,16 +21,18 @@ abigen!(
     ]"#
 );
 
-pub async fn run(
-    store: SharedSnapshotStore,
-    symbols: Vec<Symbol>,
-    rpc_url: String,
-) {
+pub async fn run(store: SharedSnapshotStore, symbols: Vec<Symbol>, rpc_url: String) {
     let provider = match Provider::<Http>::try_from(rpc_url) {
         Ok(p) => Arc::new(p),
         Err(e) => {
             error!("uniswap: failed to create provider — {e}");
-            store.update_exchange_status(Exchange::Uniswap, ExchangeStatus::Disconnected { since: Utc::now(), reason: e.to_string() });
+            store.update_exchange_status(
+                Exchange::Uniswap,
+                ExchangeStatus::Disconnected {
+                    since: Utc::now(),
+                    reason: e.to_string(),
+                },
+            );
             return;
         }
     };
@@ -38,8 +40,14 @@ pub async fn run(
     let quoter_addr: Address = QUOTER_ADDR.parse().unwrap();
     let quoter = IQuoter::new(quoter_addr, provider.clone());
 
-    info!("uniswap: starting polling every 15s for {} symbols", symbols.len());
-    store.update_exchange_status(Exchange::Uniswap, ExchangeStatus::Connected { since: Utc::now() });
+    info!(
+        "uniswap: starting polling every 15s for {} symbols",
+        symbols.len()
+    );
+    store.update_exchange_status(
+        Exchange::Uniswap,
+        ExchangeStatus::Connected { since: Utc::now() },
+    );
 
     loop {
         for &symbol in &symbols {
@@ -56,28 +64,34 @@ pub async fn run(
                 _ => (U256::from(100_000_000_000_000_000u128), 18), // 0.1 ETH/UNI
             };
 
-            // Wrap the call in a timeout to prevent hanging
             tracing::debug!("uniswap: requesting quote for {symbol:?}");
-            let call = quoter.quote_exact_input_single(token_in, token_out, fee, amount_in, U256::zero());
+            let call =
+                quoter.quote_exact_input_single(token_in, token_out, fee, amount_in, U256::zero());
             match timeout(Duration::from_secs(10), call.call()).await {
                 Ok(Ok(amount_out)) => {
                     let decimals_out = 6;
                     let amount_out_f = amount_out.as_u128() as f64 / 10f64.powi(decimals_out);
                     let amount_in_f = amount_in.as_u128() as f64 / 10f64.powi(decimals_in);
                     let price_f = amount_out_f / amount_in_f;
-                    
-                    if let Some(p) = Decimal::from_f64_retain(price_f) {
-                         let spread_multiplier = Decimal::from_str_radix("0.002", 10).unwrap();
-                         let bid_price = p * (Decimal::ONE - spread_multiplier);
-                         let ask_price = p * (Decimal::ONE + spread_multiplier);
 
-                         let ob = OrderBook::new(
-                             Exchange::Uniswap,
-                             symbol,
-                             vec![OrderBookLevel { price: bid_price, quantity: Decimal::from(100) }],
-                             vec![OrderBookLevel { price: ask_price, quantity: Decimal::from(100) }],
-                         );
-                         store.update_order_book(ob);
+                    if let Some(p) = Decimal::from_f64_retain(price_f) {
+                        let spread_multiplier = Decimal::from_str_radix("0.002", 10).unwrap();
+                        let bid_price = p * (Decimal::ONE - spread_multiplier);
+                        let ask_price = p * (Decimal::ONE + spread_multiplier);
+
+                        let ob = OrderBook::new(
+                            Exchange::Uniswap,
+                            symbol,
+                            vec![OrderBookLevel {
+                                price: bid_price,
+                                quantity: Decimal::from(100),
+                            }],
+                            vec![OrderBookLevel {
+                                price: ask_price,
+                                quantity: Decimal::from(100),
+                            }],
+                        );
+                        store.update_order_book(ob);
                     }
                 }
                 Ok(Err(e)) => {
