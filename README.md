@@ -55,6 +55,8 @@ Requires Rust 1.86+.
 
 ## Monitoring (Prometheus & Grafana)
 
+![Grafana Dashboard](docs/graphana.png)
+
 The application exports the following metrics via `/metrics`:
 
 | Metric | Type | Labels | Description |
@@ -64,6 +66,8 @@ The application exports the following metrics via `/metrics`:
 | `rtme_spread` | Gauge | `symbol` | Current spread (Max - Min) across exchanges |
 
 The provided `docker-compose.yaml` starts a pre-configured Prometheus instance that scrapes the app every 5 seconds.
+
+![Prometheus Targets](docs/prometheus.png)
 
 ---
 
