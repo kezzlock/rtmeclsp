@@ -35,7 +35,8 @@ async fn main() {
         .collect();
 
     if symbols.is_empty() {
-        panic!("no valid symbols configured");
+        tracing::error!("no valid symbols in config — check the 'symbols' list in config.yaml");
+        std::process::exit(1);
     }
 
     // Uruchomienie klientów WS per giełda

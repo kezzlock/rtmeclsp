@@ -11,9 +11,9 @@
       --surface: #111113;
       --border: #27272a;
       --border2: #3f3f46;
-      --muted: #52525b;
-      --dim: #71717a;
-      --text: #a1a1aa;
+      --muted: #71717a;
+      --dim: #a1a1aa;
+      --text: #d4d4d8;
       --bright: #f4f4f5;
       --cyan: #22d3ee;
       --green: #4ade80;
@@ -123,11 +123,12 @@
       color: var(--dim);
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
+      vertical-align: top;
     }
 
     thead th.col-pair {
       text-align: left;
-      color: var(--muted);
+      color: var(--dim);
       width: 120px;
     }
 
@@ -156,24 +157,24 @@
       background: var(--border2);
     }
 
-    thead th[data-exch="binance"]::before {
-      background: #F0B90B;
-    }
+    thead th[data-exch="binance"]::before { background: #F0B90B; }
+    thead th[data-exch="kraken"]::before  { background: #7B5EA7; }
+    thead th[data-exch="mexc"]::before    { background: #1FB58F; }
+    thead th[data-exch="okx"]::before     { background: #3370ff; }
+    thead th[data-exch="coinbase"]::before { background: #0052FF; }
 
-    thead th[data-exch="kraken"]::before {
-      background: #7B5EA7;
-    }
-
-    thead th[data-exch="mexc"]::before {
-      background: #1FB58F;
-    }
-
-    thead th[data-exch="okx"]::before {
-      background: #3370ff;
-    }
-
-    thead th[data-exch="coinbase"]::before {
-      background: #0052FF;
+    .col-desc {
+      display: block;
+      font-size: 9px;
+      font-weight: 400;
+      letter-spacing: .02em;
+      text-transform: none;
+      color: var(--muted);
+      margin-top: 3px;
+      line-height: 1.4;
+      white-space: normal;
+      max-width: 140px;
+      margin-left: auto;
     }
 
     tbody tr.sym-row {
@@ -235,32 +236,19 @@
       line-height: 1;
     }
 
-    .diff.up {
-      color: var(--green);
-    }
-
-    .diff.down {
-      color: var(--red);
-    }
-
-    .diff.flat {
-      color: var(--muted);
-    }
+    .diff.up   { color: var(--green); }
+    .diff.down { color: var(--red); }
+    .diff.flat { color: var(--muted); }
 
     .lat {
       font-size: 10px;
-      color: var(--muted);
+      color: var(--dim);
       margin-top: 4px;
       line-height: 1;
     }
 
-    .lat.fast {
-      color: var(--cyan);
-    }
-
-    .lat.slow {
-      color: var(--amber);
-    }
+    .lat.fast { color: var(--cyan); }
+    .lat.slow { color: var(--amber); }
 
     td.cell-median {
       padding: 12px 20px;
@@ -270,7 +258,7 @@
       font-size: 13px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
-      color: var(--dim);
+      color: var(--text);
       white-space: nowrap;
     }
 
@@ -279,39 +267,25 @@
       text-align: right;
       border-left: 1px solid var(--border);
       vertical-align: middle;
-      font-size: 11px;
+      font-size: 13px;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
-      color: var(--dim);
+      color: var(--text);
       white-space: nowrap;
     }
 
     @keyframes f-up {
-      0% {
-        background: rgba(74, 222, 128, .18)
-      }
-
-      100% {
-        background: transparent
-      }
+      0%   { background: rgba(74, 222, 128, .18) }
+      100% { background: transparent }
     }
 
     @keyframes f-down {
-      0% {
-        background: rgba(248, 113, 113, .18)
-      }
-
-      100% {
-        background: transparent
-      }
+      0%   { background: rgba(248, 113, 113, .18) }
+      100% { background: transparent }
     }
 
-    .flash-up {
-      animation: f-up .7s ease-out;
-    }
-
-    .flash-down {
-      animation: f-down .7s ease-out;
-    }
+    .flash-up   { animation: f-up   .7s ease-out; }
+    .flash-down { animation: f-down .7s ease-out; }
 
     .footer {
       margin-top: 20px;
@@ -323,8 +297,41 @@
     }
 
     .footer-note {
-      color: var(--border2);
+      color: var(--muted);
       font-size: 10px;
+    }
+
+    .legend {
+      margin-top: 16px;
+      display: flex;
+      gap: 0;
+      flex-wrap: wrap;
+      padding: 0;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+
+    .legend-item {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      margin-right: 28px;
+      margin-bottom: 6px;
+    }
+
+    .legend-term {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      color: var(--dim);
+      white-space: nowrap;
+    }
+
+    .legend-def {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
     }
   </style>
 </head>
@@ -350,8 +357,14 @@
           {% for exch in exchanges %}
           <th class="col-exch" data-exch="{{ exch }}">{{ exch }}</th>
           {% endfor %}
-          <th class="col-median">Median</th>
-          <th class="col-spread">Spread</th>
+          <th class="col-median">
+            Median
+            <span class="col-desc">middle price across all exchanges</span>
+          </th>
+          <th class="col-spread">
+            Spread
+            <span class="col-desc">max − min price across exchanges</span>
+          </th>
         </tr>
       </thead>
       <tbody id="tbody">
@@ -390,35 +403,54 @@
     <span class="footer-note">kraken = USD · others = USDT</span>
   </div>
 
+  <div class="legend">
+    <div class="legend-item">
+      <span class="legend-term">Median</span>
+      <span class="legend-def">middle price — half of exchanges quote above, half below; less skewed than average</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-term">Spread</span>
+      <span class="legend-def">highest − lowest price across venues; large spread = arbitrage opportunity</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-term">Diff</span>
+      <span class="legend-def">exchange price minus median (green = above, red = below)</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-term">Latency</span>
+      <span class="legend-def">exchange timestamp → server receipt; cyan &lt;50 ms, amber = slow</span>
+    </div>
+  </div>
+
   <script>
     const EXCH_COLORS = {
       binance: '#F0B90B', kraken: '#7B5EA7', mexc: '#1FB58F', okx: '#3370ff', coinbase: '#0052FF'
     };
-    const prev = {};
 
     function fmt(p, decimals = 2) {
       return p.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
     }
 
-    function render(data) {
-      const exchanges = [...new Set(
-        data.symbols.flatMap(s => s.entries.map(e => e.exchange))
-      )].sort();
+    // Stable cell IDs allow targeted updates without rebuilding DOM.
+    function cellId(sym, exch)    { return `c:${sym}:${exch}`; }
+    function medianId(sym)        { return `m:${sym}`; }
+    function spreadId(sym)        { return `s:${sym}`; }
 
+    let knownExchanges = null; // tracks column set; rebuild table on change
+    const prevPrice = {};      // sym:exch → last price, for flash detection
+
+    function setText(id, value) {
+      const el = document.getElementById(id);
+      if (el && el.textContent !== value) el.textContent = value;
+    }
+
+    function buildTable(data, exchanges) {
       const thHtml = `
-      <th class="col-pair">Pair</th>
-      ${exchanges.map(e => {
-        const color = EXCH_COLORS[e] || '#52525b';
-        return `<th class="col-exch" data-exch="${e}" style="--exch-color:${color}">${e}</th>`;
-      }).join('')}
-      <th class="col-median">Median</th>
-      <th class="col-spread">Spread</th>`;
+        <th class="col-pair">Pair</th>
+        ${exchanges.map(e => `<th class="col-exch" data-exch="${e}">${e}</th>`).join('')}
+        <th class="col-median">Median<span class="col-desc">middle price across all exchanges</span></th>
+        <th class="col-spread">Spread<span class="col-desc">max − min price across exchanges</span></th>`;
       document.getElementById('thead').innerHTML = `<tr>${thHtml}</tr>`;
-
-      document.querySelectorAll('thead th[data-exch]').forEach(th => {
-        const c = EXCH_COLORS[th.dataset.exch] || '#3f3f46';
-        th.style.setProperty('--bar-color', c);
-      });
 
       const rows = data.symbols.map(sym => {
         const byExch = Object.fromEntries(sym.entries.map(e => [e.exchange, e]));
@@ -426,44 +458,83 @@
         const cells = exchanges.map(exch => {
           const e = byExch[exch];
           if (!e) return `<td class="cell-empty">—</td>`;
-
-          const key = `${sym.symbol}:${exch}`;
-          const old = prev[key];
-          const flash = old != null ? (e.price > old ? ' flash-up' : e.price < old ? ' flash-down' : '') : '';
-          prev[key] = e.price;
-
           const diffCls = e.diff_from_median > 0.005 ? 'up' : e.diff_from_median < -0.005 ? 'down' : 'flat';
           const diffStr = (e.diff_from_median > 0 ? '+' : '') + e.diff_from_median.toFixed(2);
-
-          let latHtml;
-          if (e.latency_ms != null) {
-            const cls = Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow';
-            latHtml = `<div class="lat ${cls}">${Math.abs(e.latency_ms).toFixed(1)}ms</div>`;
-          } else {
-            latHtml = `<div class="lat">—</div>`;
-          }
-
-          return `<td class="cell-data${flash}${e.is_stale ? ' stale' : ''}">
-          <div class="price">${fmt(e.price)}</div>
-          <div class="diff ${diffCls}">${diffStr}</div>
-          ${latHtml}
-        </td>`;
+          const latCls  = e.latency_ms != null ? (Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow') : '';
+          const latTxt  = e.latency_ms != null ? Math.abs(e.latency_ms).toFixed(1) + 'ms' : '—';
+          prevPrice[cellId(sym.symbol, exch)] = e.price;
+          return `<td id="${cellId(sym.symbol, exch)}" class="cell-data${e.is_stale ? ' stale' : ''}">
+            <div class="price">${fmt(e.price)}</div>
+            <div class="diff ${diffCls}">${diffStr}</div>
+            <div class="lat ${latCls}">${latTxt}</div>
+          </td>`;
         }).join('');
 
         const prices = sym.entries.map(e => e.price);
-        const spread = prices.length > 1
-          ? (Math.max(...prices) - Math.min(...prices)).toFixed(2)
-          : '—';
+        const spread = prices.length > 1 ? fmt(Math.max(...prices) - Math.min(...prices)) : '—';
 
         return `<tr class="sym-row">
-        <td class="cell-pair"><span class="pair-badge">${sym.symbol}</span></td>
-        ${cells}
-        <td class="cell-median">${fmt(sym.median_price)}</td>
-        <td class="cell-spread">${spread}</td>
-      </tr>`;
+          <td class="cell-pair"><span class="pair-badge">${sym.symbol}</span></td>
+          ${cells}
+          <td id="${medianId(sym.symbol)}" class="cell-median">${fmt(sym.median_price)}</td>
+          <td id="${spreadId(sym.symbol)}" class="cell-spread">${spread}</td>
+        </tr>`;
       }).join('');
 
       document.getElementById('tbody').innerHTML = rows;
+      knownExchanges = exchanges.join(',');
+    }
+
+    function patchTable(data, exchanges) {
+      data.symbols.forEach(sym => {
+        const byExch = Object.fromEntries(sym.entries.map(e => [e.exchange, e]));
+
+        exchanges.forEach(exch => {
+          const td = document.getElementById(cellId(sym.symbol, exch));
+          if (!td) return;
+          const e = byExch[exch];
+          if (!e) return;
+
+          const key = cellId(sym.symbol, exch);
+          const prev = prevPrice[key];
+          if (prev != null && prev !== e.price) {
+            td.classList.remove('flash-up', 'flash-down');
+            void td.offsetWidth; // force reflow to restart animation
+            td.classList.add(e.price > prev ? 'flash-up' : 'flash-down');
+          }
+          prevPrice[key] = e.price;
+
+          td.className = 'cell-data' + (e.is_stale ? ' stale' : '');
+
+          const diffCls = e.diff_from_median > 0.005 ? 'up' : e.diff_from_median < -0.005 ? 'down' : 'flat';
+          const diffStr = (e.diff_from_median > 0 ? '+' : '') + e.diff_from_median.toFixed(2);
+          const latCls  = e.latency_ms != null ? (Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow') : '';
+          const latTxt  = e.latency_ms != null ? Math.abs(e.latency_ms).toFixed(1) + 'ms' : '—';
+
+          const [priceEl, diffEl, latEl] = td.children;
+          if (priceEl) priceEl.textContent = fmt(e.price);
+          if (diffEl)  { diffEl.textContent = diffStr; diffEl.className = `diff ${diffCls}`; }
+          if (latEl)   { latEl.textContent = latTxt;   latEl.className  = `lat ${latCls}`; }
+        });
+
+        const prices = sym.entries.map(e => e.price);
+        const spread = prices.length > 1 ? fmt(Math.max(...prices) - Math.min(...prices)) : '—';
+        setText(medianId(sym.symbol), fmt(sym.median_price));
+        setText(spreadId(sym.symbol), spread);
+      });
+    }
+
+    function render(data) {
+      const exchanges = [...new Set(
+        data.symbols.flatMap(s => s.entries.map(e => e.exchange))
+      )].sort();
+
+      if (knownExchanges !== exchanges.join(',')) {
+        buildTable(data, exchanges);
+      } else {
+        patchTable(data, exchanges);
+      }
+
       document.getElementById('updated').textContent =
         'updated ' + new Date().toLocaleTimeString('en-US', { hour12: false });
     }
