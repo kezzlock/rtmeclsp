@@ -22,6 +22,8 @@ tera = "1"
 tokio-stream = "0.1"
 utoipa = { version = "5.5.0", features = ["axum_extras", "chrono", "decimal"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "reqwest"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

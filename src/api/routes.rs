@@ -13,6 +13,7 @@ use axum::{
     },
     routing::get,
 };
+use metrics_exporter_prometheus::PrometheusHandle;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use rust_decimal::Decimal;
@@ -35,6 +36,7 @@ use crate::{
 pub struct AppState {
     pub store: SharedSnapshotStore,
     pub tera: Arc<Tera>,
+    pub prometheus_handle: PrometheusHandle,
 }
 
 impl FromRef<AppState> for SharedSnapshotStore {
@@ -51,6 +53,7 @@ pub fn router(state: AppState) -> Router {
         .route("/snapshot", get(snapshot))
         .route("/exchanges", get(exchanges))
         .route("/history", get(history))
+        .route("/metrics", get(metrics_handler))
         .route("/events", get(events))
         .with_state(state)
 }
@@ -338,6 +341,11 @@ async fn history(
         .into_response()
 }
 
+/// Prometheus metrics endpoint
+async fn metrics_handler(State(state): State<AppState>) -> String {
+    state.prometheus_handle.render()
+}
+
 pub fn build_snapshot_response(
     store: &SharedSnapshotStore,
     symbols: &[Symbol],
@@ -397,6 +405,7 @@ fn median(mut prices: Vec<Decimal>) -> Decimal {
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
+    use metrics_exporter_prometheus::PrometheusBuilder;
     use serde_json::Value;
     use tower::ServiceExt;
 
@@ -409,9 +418,11 @@ mod tests {
     }
 
     fn test_state() -> AppState {
+        let handle = PrometheusBuilder::new().install_recorder().unwrap();
         AppState {
             store: Arc::new(SnapshotStore::new(10_000, 100)),
             tera: Arc::new(Tera::default()),
+            prometheus_handle: handle,
         }
     }
 

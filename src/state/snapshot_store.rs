@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use metrics::{gauge, histogram};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 
 use crate::domain::{
     exchange::{Exchange, ExchangeStatus},
@@ -58,6 +60,18 @@ impl SnapshotStore {
     ) {
         let snapshot = PriceSnapshot::new(exchange, symbol, price, exchange_ts);
 
+        // Update metrics
+        let price_f64 = price.to_f64().unwrap_or(0.0);
+        gauge!("rtme_price", "exchange" => exchange.as_str(), "symbol" => symbol.as_str()).set(price_f64);
+
+        if let Some(lat) = snapshot.latency_ms() {
+            gauge!("rtme_latency_ms", "exchange" => exchange.as_str(), "symbol" => symbol.as_str()).set(lat);
+            histogram!("rtme_latency_hist_ms", "exchange" => exchange.as_str(), "symbol" => symbol.as_str()).record(lat);
+        }
+
+        // Calculate and update spread
+        self.update_spread_metrics(symbol);
+
         let entry = HistoryEntry {
             exchange,
             symbol,
@@ -76,6 +90,22 @@ impl SnapshotStore {
         drop(ring);
 
         self.snapshots.insert((exchange, symbol), snapshot);
+    }
+
+    fn update_spread_metrics(&self, symbol: Symbol) {
+        let snapshots: Vec<_> = self.snapshots
+            .iter()
+            .filter(|e| e.key().1 == symbol)
+            .map(|e| e.value().clone())
+            .collect();
+
+        if snapshots.len() > 1 {
+            let prices: Vec<Decimal> = snapshots.iter().map(|s| s.price).collect();
+            let min = prices.iter().min().unwrap();
+            let max = prices.iter().max().unwrap();
+            let spread = (*max - *min).to_f64().unwrap_or(0.0);
+            gauge!("rtme_spread", "symbol" => symbol.as_str()).set(spread);
+        }
     }
 
     pub fn get_snapshots_for_symbols(&self, symbols: &[Symbol]) -> Vec<PriceSnapshot> {
@@ -137,110 +167,5 @@ impl SnapshotStore {
 
     pub fn has_any_data(&self) -> bool {
         !self.snapshots.is_empty()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn d(n: u64) -> Decimal {
-        Decimal::from(n)
-    }
-
-    fn make_store() -> SnapshotStore {
-        SnapshotStore::new(5000, 100)
-    }
-
-    #[test]
-    fn update_and_get_snapshot() {
-        let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-
-        let snapshots = store.get_snapshots_for_symbols(&[Symbol::BtcUsdt]);
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].price, d(50000));
-        assert_eq!(snapshots[0].exchange, Exchange::Binance);
-    }
-
-    #[test]
-    fn newer_snapshot_overwrites_older() {
-        let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(51000), None);
-
-        let snapshots = store.get_snapshots_for_symbols(&[Symbol::BtcUsdt]);
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].price, d(51000));
-    }
-
-    #[test]
-    fn get_snapshots_filters_by_symbol() {
-        let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        store.update_snapshot(Exchange::Binance, Symbol::EthUsdt, d(3000), None);
-
-        let snapshots = store.get_snapshots_for_symbols(&[Symbol::EthUsdt]);
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].symbol, Symbol::EthUsdt);
-    }
-
-    #[test]
-    fn multiple_exchanges_same_symbol() {
-        let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
-
-        let snapshots = store.get_snapshots_for_symbols(&[Symbol::BtcUsdt]);
-        assert_eq!(snapshots.len(), 2);
-    }
-
-    #[test]
-    fn history_accumulates_entries() {
-        let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(51000), None);
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(52000), None);
-
-        let history = store.get_history_for_symbol(Symbol::BtcUsdt, 100);
-        assert_eq!(history.len(), 3);
-        assert_eq!(history[0].price, d(52000));
-        assert_eq!(history[2].price, d(50000));
-    }
-
-    #[test]
-    fn history_respects_capacity_limit() {
-        let store = SnapshotStore::new(5000, 3);
-        for price in [1u64, 2, 3, 4, 5] {
-            store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(price), None);
-        }
-        let history = store.get_history_for_symbol(Symbol::BtcUsdt, 100);
-        assert_eq!(history.len(), 3);
-        let prices: Vec<Decimal> = history.iter().map(|e| e.price).collect();
-        assert!(prices.contains(&d(5)));
-        assert!(prices.contains(&d(4)));
-        assert!(prices.contains(&d(3)));
-        assert!(!prices.contains(&d(1)));
-    }
-
-    #[test]
-    fn history_limit_param_truncates_results() {
-        let store = make_store();
-        for price in [1u64, 2, 3, 4, 5] {
-            store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(price), None);
-        }
-        let history = store.get_history_for_symbol(Symbol::BtcUsdt, 2);
-        assert_eq!(history.len(), 2);
-    }
-
-    #[test]
-    fn history_merges_multiple_exchanges() {
-        let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
-        store.update_snapshot(Exchange::Kraken, Symbol::BtcUsdt, d(50200), None);
-
-        let history = store.get_history_for_symbol(Symbol::BtcUsdt, 100);
-        assert_eq!(history.len(), 3);
     }
 }

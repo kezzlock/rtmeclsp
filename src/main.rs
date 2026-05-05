@@ -6,6 +6,7 @@ mod state;
 
 use std::sync::Arc;
 
+use metrics_exporter_prometheus::PrometheusBuilder;
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -19,6 +20,12 @@ use crate::{
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+
+    // Inicjalizacja metryk Prometheus
+    let prometheus_builder = PrometheusBuilder::new();
+    let prometheus_handle = prometheus_builder
+        .install_recorder()
+        .expect("failed to install prometheus recorder");
 
     let cfg = AppConfig::load().expect("failed to load config");
     info!("config loaded: port={}, exchanges={:?}", cfg.http.port, cfg.exchanges.enabled);
@@ -83,6 +90,7 @@ async fn main() {
     let app_state = AppState {
         store: Arc::clone(&store),
         tera: Arc::new(tera),
+        prometheus_handle,
     };
 
     let router = api::routes::router(app_state);

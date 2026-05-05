@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 5s # Co ile sekund Prometheus ma pobierać dane
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "rtmeclsp"
+    static_configs:
+      # Wewnątrz sieci Docker Compose nazwa serwisu to 'rtmeclsp'
+      - targets: ["rtmeclsp:8080"]

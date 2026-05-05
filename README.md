@@ -16,6 +16,8 @@ Live price dashboard that aggregates tickers from Binance, Kraken, MEXC and OKX,
 - **Staleness detection** — cells fade when a feed goes silent (configurable threshold)
 - **Exchange status** — tracks Connected / Disconnected / Reconnecting per exchange
 - **Price history** — ring-buffer per (exchange, symbol), queryable via REST
+- **Prometheus Metrics** — built-in `/metrics` endpoint for latency, price, and spread monitoring
+- **Swagger Documentation** — full API spec available at `/docs`
 - **Configurable** — symbols and exchanges chosen in `config.yaml`; no recompile needed
 
 ---
@@ -24,13 +26,19 @@ Live price dashboard that aggregates tickers from Binance, Kraken, MEXC and OKX,
 
 ### Docker (recommended)
 
+The project includes a full monitoring stack (Prometheus + Grafana).
+
 ```bash
 git clone https://github.com/kezzlock/rtmeclsp
 cd rtmeclsp
 docker compose up
 ```
 
-Open **http://localhost:8080**
+Services:
+- **Dashboard**: [http://localhost:8080](http://localhost:8080)
+- **Swagger Docs**: [http://localhost:8080/docs](http://localhost:8080/docs)
+- **Prometheus**: [http://localhost:9090](http://localhost:9090)
+- **Grafana**: [http://localhost:3000](http://localhost:3000) (Anonymous login as Admin)
 
 To change symbols or exchanges, edit `config.yaml` and restart the container.
 
@@ -41,7 +49,21 @@ cargo build --release
 ./target/release/rtmeclsp
 ```
 
-Requires Rust 1.82+.
+Requires Rust 1.86+.
+
+---
+
+## Monitoring (Prometheus & Grafana)
+
+The application exports the following metrics via `/metrics`:
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `rtme_price` | Gauge | `exchange`, `symbol` | Current price from exchange |
+| `rtme_latency_ms` | Gauge | `exchange`, `symbol` | Latency (Exchange TS → Server receipt) |
+| `rtme_spread` | Gauge | `symbol` | Current spread (Max - Min) across exchanges |
+
+The provided `docker-compose.yaml` starts a pre-configured Prometheus instance that scrapes the app every 5 seconds.
 
 ---
 
@@ -81,34 +103,14 @@ store:
 | Endpoint | Description |
 |---|---|
 | `GET /` | Live dashboard (HTML) |
+| `GET /docs` | Swagger / OpenAPI Documentation |
+| `GET /metrics` | Prometheus Metrics |
 | `GET /health` | `{"status":"ok","has_data":bool}` |
 | `GET /snapshot` | Current prices for all symbols (JSON) |
 | `GET /snapshot?symbols=BTCUSDT,ETHUSDT` | Filtered snapshot |
 | `GET /exchanges` | Exchange connection statuses |
 | `GET /history?symbol=BTCUSDT&limit=100` | Price history (newest first) |
 | `GET /events` | SSE stream — emits `snapshot` event every 500 ms |
-
-### Snapshot response
-
-```json
-{
-  "symbols": [
-    {
-      "symbol": "BTCUSDT",
-      "median_price": 80845.26,
-      "entries": [
-        {
-          "exchange": "binance",
-          "price": 80848.21,
-          "diff_from_median": 2.95,
-          "latency_ms": 0.2,
-          "is_stale": false
-        }
-      ]
-    }
-  ]
-}
-```
 
 ---
 
@@ -127,11 +129,12 @@ main.rs ──► tokio::spawn × N exchanges
                          │
                          ▼
                   SharedSnapshotStore (DashMap)
-                  + history ring-buffers (VecDeque)
+                  + metrics emission
                          │
                          ▼
                   axum HTTP server
                   ├── GET /snapshot, /history, /exchanges
+                  ├── GET /metrics (Prometheus)
                   └── GET /events  (SSE, 500 ms interval)
                              │
                              ▼
@@ -143,36 +146,7 @@ main.rs ──► tokio::spawn × N exchanges
 - `DashMap` instead of `RwLock<HashMap>` — lock-free concurrent reads from many WS tasks
 - `WsAdapter` trait — adding a new exchange requires only a parser struct; reconnect/backoff logic is shared
 - MEXC uses REST polling (their WebSocket requires authentication and is geographically blocked for public data)
-- `f64` for prices — sufficient for display; `rust_decimal` is in `Cargo.toml` ready for trading logic migration
-
----
-
-## Adding an exchange
-
-1. Add a variant to `src/domain/exchange.rs`
-2. Add symbol mappings to `src/domain/symbol.rs`
-3. Create `src/infra/yourexchange_client.rs` implementing `WsAdapter`:
-
-```rust
-pub struct YourAdapter { symbols: Vec<Symbol>, subscribe_json: String }
-
-impl WsAdapter for YourAdapter {
-    fn exchange(&self) -> Exchange { Exchange::YourExchange }
-    fn ws_url(&self) -> String { "wss://...".into() }
-    fn subscribe_message(&self) -> Option<String> { Some(self.subscribe_json.clone()) }
-    fn parse_message(&self, text: &str)
-        -> Result<Vec<(Symbol, f64, Option<DateTime<Utc>>)>, String>
-    {
-        // parse exchange-specific JSON
-    }
-}
-
-pub async fn run(store: SharedSnapshotStore, symbols: Vec<Symbol>, backoff: u64, max: u32) {
-    run_ws_feed(YourAdapter::new(symbols), store, backoff, max).await;
-}
-```
-
-4. Wire it up in `main.rs` and add to `config.yaml`.
+- `Decimal` for prices — high-precision arithmetic for spread and median calculations
 
 ---
 
