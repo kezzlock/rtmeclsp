@@ -11,9 +11,7 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::{
-    api::routes::AppState,
-    config::config::AppConfig,
-    domain::symbol::Symbol,
+    api::routes::AppState, config::config::AppConfig, domain::symbol::Symbol,
     state::snapshot_store::SnapshotStore,
 };
 
@@ -21,14 +19,16 @@ use crate::{
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    // Inicjalizacja metryk Prometheus
     let prometheus_builder = PrometheusBuilder::new();
     let prometheus_handle = prometheus_builder
         .install_recorder()
         .expect("failed to install prometheus recorder");
 
     let cfg = AppConfig::load().expect("failed to load config");
-    info!("config loaded: port={}, exchanges={:?}", cfg.http.port, cfg.exchanges.enabled);
+    info!(
+        "config loaded: port={}, exchanges={:?}",
+        cfg.http.port, cfg.exchanges.enabled
+    );
 
     let store = Arc::new(SnapshotStore::new(
         cfg.store.stale_threshold_ms,
@@ -46,7 +46,6 @@ async fn main() {
         std::process::exit(1);
     }
 
-    // Uruchomienie klientów WS per giełda
     for exchange_id in &cfg.exchanges.enabled {
         let store_clone = Arc::clone(&store);
         let symbols_clone = symbols.clone();
@@ -74,8 +73,19 @@ async fn main() {
             }
             "okx" => {
                 tokio::spawn(async move {
-                    infra::okx_client::run(store_clone, symbols_clone, backoff, max_attempts)
-                        .await;
+                    infra::okx_client::run(store_clone, symbols_clone, backoff, max_attempts).await;
+                });
+            }
+            "uniswap" => {
+                let rpc_url = cfg.rpc.ethereum_url.clone();
+                tokio::spawn(async move {
+                    infra::uniswap_client::run(store_clone, symbols_clone, rpc_url).await;
+                });
+            }
+            "raydium" => {
+                let rpc_url = cfg.rpc.solana_url.clone();
+                tokio::spawn(async move {
+                    infra::raydium_client::run(store_clone, symbols_clone, rpc_url).await;
                 });
             }
             other => {
@@ -84,8 +94,7 @@ async fn main() {
         }
     }
 
-    let tera = tera::Tera::new("templates/**/*.html")
-        .expect("failed to load templates");
+    let tera = tera::Tera::new("templates/**/*.html").expect("failed to load templates");
 
     let app_state = AppState {
         store: Arc::clone(&store),

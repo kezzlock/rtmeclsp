@@ -2,8 +2,12 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{exchange::Exchange, symbol::Symbol};
-use crate::infra::ws_feed::{WsAdapter, run_ws_feed};
+use crate::domain::{
+    exchange::Exchange,
+    order_book::{OrderBook, OrderBookLevel},
+    symbol::Symbol,
+};
+use crate::infra::ws_feed::{WsAdapter, WsUpdate, run_ws_feed};
 use crate::state::snapshot_store::SharedSnapshotStore;
 
 const WS_URL: &str = "wss://ws.kraken.com/v2";
@@ -18,6 +22,7 @@ struct SubscribeRequest {
 struct SubscribeParams {
     channel: &'static str,
     symbol: Vec<&'static str>,
+    depth: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,9 +34,17 @@ struct KrakenEnvelope {
 }
 
 #[derive(Debug, Deserialize)]
-struct KrakenTickerEntry {
+struct KrakenBookEntry {
     symbol: String,
-    last: f64, // Kraken sends a JSON number, not a string
+    bids: Vec<KrakenLevel>,
+    asks: Vec<KrakenLevel>,
+    timestamp: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KrakenLevel {
+    price: Decimal,
+    qty: Decimal,
 }
 
 pub struct KrakenAdapter {
@@ -44,10 +57,18 @@ impl KrakenAdapter {
         let symbol_strs: Vec<&'static str> = symbols.iter().map(|s| s.kraken_symbol()).collect();
         let sub = SubscribeRequest {
             method: "subscribe",
-            params: SubscribeParams { channel: "ticker", symbol: symbol_strs },
+            params: SubscribeParams {
+                channel: "book",
+                symbol: symbol_strs,
+                depth: 10,
+            },
         };
-        let subscribe_json = serde_json::to_string(&sub).expect("subscribe serialization is infallible");
-        Self { symbols, subscribe_json }
+        let subscribe_json =
+            serde_json::to_string(&sub).expect("subscribe serialization is infallible");
+        Self {
+            symbols,
+            subscribe_json,
+        }
     }
 }
 
@@ -64,11 +85,11 @@ impl WsAdapter for KrakenAdapter {
         Some(self.subscribe_json.clone())
     }
 
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String> {
-        let envelope: KrakenEnvelope = serde_json::from_str(text)
-            .map_err(|e| format!("deserialize: {e}"))?;
+    fn parse_message(&self, text: &str) -> Result<Vec<WsUpdate>, String> {
+        let envelope: KrakenEnvelope =
+            serde_json::from_str(text).map_err(|e| format!("deserialize: {e}"))?;
 
-        if envelope.channel.as_deref() != Some("ticker") {
+        if envelope.channel.as_deref() != Some("book") {
             return Ok(vec![]);
         }
         match envelope.msg_type.as_deref() {
@@ -83,12 +104,8 @@ impl WsAdapter for KrakenAdapter {
 
         let mut updates = Vec::with_capacity(raw_entries.len());
         for raw in raw_entries {
-            let entry: KrakenTickerEntry = serde_json::from_value(raw.clone())
-                .map_err(|e| format!("ticker entry: {e}"))?;
-
-            // Kraken sends JSON numbers; convert via string to preserve display precision
-            let price: Decimal = entry.last.to_string().parse()
-                .map_err(|e| format!("price parse: {e}"))?;
+            let entry: KrakenBookEntry =
+                serde_json::from_value(raw.clone()).map_err(|e| format!("book entry: {e}"))?;
 
             let symbol = self
                 .symbols
@@ -97,7 +114,25 @@ impl WsAdapter for KrakenAdapter {
                 .copied()
                 .ok_or_else(|| format!("unknown kraken symbol: {}", entry.symbol))?;
 
-            updates.push((symbol, price, None));
+            let bids = entry
+                .bids
+                .into_iter()
+                .map(|l| OrderBookLevel {
+                    price: l.price,
+                    quantity: l.qty,
+                })
+                .collect();
+            let asks = entry
+                .asks
+                .into_iter()
+                .map(|l| OrderBookLevel {
+                    price: l.price,
+                    quantity: l.qty,
+                })
+                .collect();
+
+            let ob = OrderBook::new(Exchange::Kraken, symbol, bids, asks);
+            updates.push(WsUpdate::OrderBook(ob));
         }
 
         Ok(updates)

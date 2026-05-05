@@ -1,5 +1,6 @@
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM rust:1.86-slim AS builder
+# Zmieniamy wersję na 1.88, aby obsłużyć nowsze wersje bibliotek (np. time)
+FROM rust:1.88-slim AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
 

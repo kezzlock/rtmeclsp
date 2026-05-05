@@ -9,6 +9,7 @@ use rust_decimal::prelude::ToPrimitive;
 
 use crate::domain::{
     exchange::{Exchange, ExchangeStatus},
+    order_book::OrderBook,
     price_snapshot::PriceSnapshot,
     symbol::Symbol,
 };
@@ -34,6 +35,7 @@ impl HistoryEntry {
 
 pub struct SnapshotStore {
     snapshots: DashMap<(Exchange, Symbol), PriceSnapshot>,
+    order_books: DashMap<(Exchange, Symbol), OrderBook>,
     exchange_status: DashMap<Exchange, ExchangeStatus>,
     history: DashMap<(Exchange, Symbol), VecDeque<HistoryEntry>>,
     history_capacity: usize,
@@ -44,6 +46,7 @@ impl SnapshotStore {
     pub fn new(stale_threshold_ms: u64, history_capacity: usize) -> Self {
         Self {
             snapshots: DashMap::new(),
+            order_books: DashMap::new(),
             exchange_status: DashMap::new(),
             history: DashMap::new(),
             history_capacity,
@@ -60,16 +63,16 @@ impl SnapshotStore {
     ) {
         let snapshot = PriceSnapshot::new(exchange, symbol, price, exchange_ts);
 
-        // Update metrics
         let price_f64 = price.to_f64().unwrap_or(0.0);
-        gauge!("rtme_price", "exchange" => exchange.as_str(), "symbol" => symbol.as_str()).set(price_f64);
+        gauge!("rtme_price", "exchange" => exchange.as_str(), "symbol" => symbol.as_str())
+            .set(price_f64);
 
         if let Some(lat) = snapshot.latency_ms() {
-            gauge!("rtme_latency_ms", "exchange" => exchange.as_str(), "symbol" => symbol.as_str()).set(lat);
+            gauge!("rtme_latency_ms", "exchange" => exchange.as_str(), "symbol" => symbol.as_str())
+                .set(lat);
             histogram!("rtme_latency_hist_ms", "exchange" => exchange.as_str(), "symbol" => symbol.as_str()).record(lat);
         }
 
-        // Calculate and update spread
         self.update_spread_metrics(symbol);
 
         let entry = HistoryEntry {
@@ -92,8 +95,39 @@ impl SnapshotStore {
         self.snapshots.insert((exchange, symbol), snapshot);
     }
 
+    pub fn update_order_book(&self, ob: OrderBook) {
+        if let Some(best_bid) = ob.bids.first() {
+            gauge!("rtme_best_bid", "exchange" => ob.exchange.as_str(), "symbol" => ob.symbol.as_str()).set(best_bid.price.to_f64().unwrap_or(0.0));
+        }
+        if let Some(best_ask) = ob.asks.first() {
+            gauge!("rtme_best_ask", "exchange" => ob.exchange.as_str(), "symbol" => ob.symbol.as_str()).set(best_ask.price.to_f64().unwrap_or(0.0));
+        }
+
+        // Merge logic
+        let mut entry = self.order_books.entry((ob.exchange, ob.symbol)).or_insert_with(|| ob.clone());
+        if entry.timestamp < ob.timestamp {
+            entry.merge(ob.clone());
+        }
+        let merged_ob = entry.value().clone();
+        drop(entry);
+
+        if let (Some(b), Some(a)) = (merged_ob.bids.first(), merged_ob.asks.first()) {
+            let mid = (b.price + a.price) / Decimal::from(2);
+            self.update_snapshot(merged_ob.exchange, merged_ob.symbol, mid, Some(merged_ob.timestamp));
+        }
+
+        self.order_books.insert((ob.exchange, ob.symbol), merged_ob);
+    }
+
+    pub fn get_order_book(&self, exchange: Exchange, symbol: Symbol) -> Option<OrderBook> {
+        self.order_books
+            .get(&(exchange, symbol))
+            .map(|e| e.value().clone())
+    }
+
     fn update_spread_metrics(&self, symbol: Symbol) {
-        let snapshots: Vec<_> = self.snapshots
+        let snapshots: Vec<_> = self
+            .snapshots
             .iter()
             .filter(|e| e.key().1 == symbol)
             .map(|e| e.value().clone())

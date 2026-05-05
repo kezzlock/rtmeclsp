@@ -11,6 +11,7 @@ tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -20,10 +21,9 @@ rust_decimal = { version = "1", features = ["serde-float"] }
 reqwest = { version = "0.12", features = ["json"] }
 tera = "1"
 tokio-stream = "0.1"
-utoipa = { version = "5.5.0", features = ["axum_extras", "chrono", "decimal"] }
-utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "reqwest"] }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
+ethers = { version = "2.0.14", features = ["rustls", "abigen"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

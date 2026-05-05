@@ -2,8 +2,12 @@ use chrono::{DateTime, TimeZone, Utc};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 
-use crate::domain::{exchange::Exchange, symbol::Symbol};
-use crate::infra::ws_feed::{WsAdapter, run_ws_feed};
+use crate::domain::{
+    exchange::Exchange,
+    order_book::{OrderBook, OrderBookLevel},
+    symbol::Symbol,
+};
+use crate::infra::ws_feed::{WsAdapter, WsUpdate, run_ws_feed};
 use crate::state::snapshot_store::SharedSnapshotStore;
 
 const WS_BASE: &str = "wss://stream.binance.com:9443/stream";
@@ -11,15 +15,15 @@ const WS_BASE: &str = "wss://stream.binance.com:9443/stream";
 #[derive(Debug, Deserialize)]
 struct BinanceCombinedMessage {
     stream: String,
-    data: BinanceTickerData,
+    data: BinanceDepthData,
 }
 
 #[derive(Debug, Deserialize)]
-struct BinanceTickerData {
-    #[serde(rename = "c")]
-    last_price: String,
-    #[serde(rename = "E", default)]
-    event_time: u64,
+struct BinanceDepthData {
+    #[serde(rename = "lastUpdateId")]
+    last_update_id: u64,
+    bids: Vec<[String; 2]>,
+    asks: Vec<[String; 2]>,
 }
 
 pub struct BinanceAdapter {
@@ -31,7 +35,7 @@ impl BinanceAdapter {
     fn new(symbols: Vec<Symbol>) -> Self {
         let streams = symbols
             .iter()
-            .map(|s| s.binance_stream())
+            .map(|s| format!("{}@depth5@100ms", s.as_str().to_lowercase()))
             .collect::<Vec<_>>()
             .join("/");
         let url = format!("{WS_BASE}?streams={streams}");
@@ -52,28 +56,35 @@ impl WsAdapter for BinanceAdapter {
         None
     }
 
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String> {
+    fn parse_message(&self, text: &str) -> Result<Vec<WsUpdate>, String> {
         let msg: BinanceCombinedMessage = serde_json::from_str(text)
             .map_err(|e| format!("deserialize: {e}"))?;
 
-        let price: Decimal = msg.data.last_price.parse()
-            .map_err(|e| format!("price parse: {e}"))?;
-
-        let exchange_ts: Option<DateTime<Utc>> = if msg.data.event_time > 0 {
-            Utc.timestamp_millis_opt(msg.data.event_time as i64).single()
-        } else {
-            None
-        };
-
+        let symbol_str = msg.stream.split('@').next().unwrap_or_default();
         let symbol = self
             .symbols
             .iter()
-            .find(|&&s| s.binance_stream() == msg.stream.as_str())
+            .find(|&&s| s.as_str().to_lowercase() == symbol_str)
             .copied()
             .ok_or_else(|| format!("unknown stream: {}", msg.stream))?;
 
-        Ok(vec![(symbol, price, exchange_ts)])
+        let bids = parse_levels(&msg.data.bids)?;
+        let asks = parse_levels(&msg.data.asks)?;
+
+        let ob = OrderBook::new(Exchange::Binance, symbol, bids, asks);
+        Ok(vec![WsUpdate::OrderBook(ob)])
     }
+}
+
+fn parse_levels(raw: &[[String; 2]]) -> Result<Vec<OrderBookLevel>, String> {
+    raw.iter()
+        .map(|[p, q]| {
+            Ok(OrderBookLevel {
+                price: p.parse().map_err(|e| format!("price parse: {e}"))?,
+                quantity: q.parse().map_err(|e| format!("qty parse: {e}"))?,
+            })
+        })
+        .collect()
 }
 
 pub async fn run(

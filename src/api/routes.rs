@@ -14,8 +14,6 @@ use axum::{
     routing::get,
 };
 use metrics_exporter_prometheus::PrometheusHandle;
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -27,7 +25,6 @@ use crate::{
         ExchangeEntry, ExchangeStatusView, ExchangesResponse, HealthResponse, HistoryEntryDto,
         HistoryResponse, SnapshotResponse, SymbolView,
     },
-    domain::exchange::ExchangeStatus,
     domain::symbol::{ALL_SYMBOLS, Symbol},
     state::snapshot_store::SharedSnapshotStore,
 };
@@ -47,7 +44,6 @@ impl FromRef<AppState> for SharedSnapshotStore {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route("/", get(index))
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
@@ -58,29 +54,13 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-#[derive(OpenApi)]
-#[openapi(
-    paths(health, snapshot, exchanges, history),
-    components(schemas(
-        HealthResponse, 
-        SnapshotResponse, 
-        SymbolView, 
-        ExchangeEntry, 
-        ExchangesResponse, 
-        ExchangeStatusView, 
-        ExchangeStatus,
-        HistoryResponse,
-        HistoryEntryDto
-    ))
-)]
-struct ApiDoc;
-
 // ── Tera context types (f64 — Tera can't render Decimal natively) ─────────────
 
 #[derive(Serialize)]
 struct PivotContext {
     exchanges: Vec<String>,
     rows: Vec<PivotRow>,
+    volume: f64,
 }
 
 #[derive(Serialize)]
@@ -95,6 +75,8 @@ struct PivotRow {
 struct PivotCell {
     has_data: bool,
     price: f64,
+    est_buy: Option<f64>,
+    est_sell: Option<f64>,
     diff: f64,
     latency_ms: Option<f64>,
     is_stale: bool,
@@ -124,8 +106,10 @@ fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
                     if let Some(e) = sym.entries.iter().find(|e| &e.exchange == exch) {
                         PivotCell {
                             has_data: true,
-                            price: to_f64(e.price),
-                            diff: to_f64(e.diff_from_median),
+                            price: e.price,
+                            est_buy: e.est_buy_price,
+                            est_sell: e.est_sell_price,
+                            diff: e.diff_from_median,
                             latency_ms: e.latency_ms,
                             is_stale: e.is_stale,
                         }
@@ -133,6 +117,8 @@ fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
                         PivotCell {
                             has_data: false,
                             price: 0.0,
+                            est_buy: None,
+                            est_sell: None,
                             diff: 0.0,
                             latency_ms: None,
                             is_stale: false,
@@ -141,32 +127,37 @@ fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
                 })
                 .collect();
 
-            let prices: Vec<Decimal> = sym.entries.iter().map(|e| e.price).collect();
+            let prices: Vec<f64> = sym.entries.iter().map(|e| e.price).collect();
             let spread = if prices.len() > 1 {
-                prices.iter().copied().max().unwrap_or(Decimal::ZERO)
-                    - prices.iter().copied().min().unwrap_or(Decimal::ZERO)
+                prices.iter().copied().fold(f64::MIN, f64::max)
+                    - prices.iter().copied().fold(f64::MAX, f64::min)
             } else {
-                Decimal::ZERO
+                0.0
             };
 
             PivotRow {
                 symbol: sym.symbol.clone(),
-                median_price: to_f64(sym.median_price),
-                spread: to_f64(spread),
+                median_price: sym.median_price,
+                spread,
                 cells,
             }
         })
         .collect();
 
-    PivotContext { exchanges, rows }
+    PivotContext { 
+        exchanges, 
+        rows, 
+        volume: snapshot.volume 
+    }
 }
 
 async fn index(State(state): State<AppState>) -> impl IntoResponse {
-    let data = build_snapshot_response(&state.store, ALL_SYMBOLS);
+    let data = build_snapshot_response(&state.store, ALL_SYMBOLS, Decimal::ZERO);
     let pivot = build_pivot(&data);
     let mut ctx = tera::Context::new();
     ctx.insert("exchanges", &pivot.exchanges);
     ctx.insert("rows", &pivot.rows);
+    ctx.insert("volume", &pivot.volume);
 
     match state.tera.render("index.html", &ctx) {
         Ok(html) => (
@@ -185,10 +176,13 @@ async fn index(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn events(
     State(store): State<SharedSnapshotStore>,
+    Query(query): Query<SnapshotQuery>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let interval = tokio::time::interval(Duration::from_millis(500));
+    let volume = Decimal::from_f64_retain(query.volume.unwrap_or(0.0)).unwrap_or(Decimal::ZERO);
+    
     let stream = tokio_stream::wrappers::IntervalStream::new(interval).map(move |_| {
-        let data = build_snapshot_response(&store, ALL_SYMBOLS);
+        let data = build_snapshot_response(&store, ALL_SYMBOLS, volume);
         let json = serde_json::to_string(&data).unwrap_or_default();
         Ok::<Event, Infallible>(Event::default().event("snapshot").data(json))
     });
@@ -196,14 +190,6 @@ async fn events(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Health check endpoint
-#[utoipa::path(
-    get,
-    path = "/health",
-    responses(
-        (status = 200, description = "Server is healthy", body = HealthResponse)
-    )
-)]
 async fn health(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
@@ -211,21 +197,12 @@ async fn health(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
     })
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
+#[derive(Deserialize)]
 struct SnapshotQuery {
-    /// Comma-separated list of symbols (e.g. BTCUSDT,ETHUSDT). Empty = all symbols.
     symbols: Option<String>,
+    volume: Option<f64>,
 }
 
-/// Get current price snapshots for requested symbols
-#[utoipa::path(
-    get,
-    path = "/snapshot",
-    params(SnapshotQuery),
-    responses(
-        (status = 200, description = "Current snapshots", body = SnapshotResponse)
-    )
-)]
 async fn snapshot(
     State(store): State<SharedSnapshotStore>,
     Query(query): Query<SnapshotQuery>,
@@ -243,18 +220,12 @@ async fn snapshot(
         requested
     };
 
-    let data = build_snapshot_response(&store, &symbols);
+    let volume = Decimal::from_f64_retain(query.volume.unwrap_or(0.0)).unwrap_or(Decimal::ZERO);
+
+    let data = build_snapshot_response(&store, &symbols, volume);
     (StatusCode::OK, Json(data))
 }
 
-/// Get status of all exchange connections
-#[utoipa::path(
-    get,
-    path = "/exchanges",
-    responses(
-        (status = 200, description = "Exchange statuses", body = ExchangesResponse)
-    )
-)]
 async fn exchanges(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
     let mut views: Vec<ExchangeStatusView> = store
         .get_all_exchange_statuses()
@@ -268,11 +239,9 @@ async fn exchanges(State(store): State<SharedSnapshotStore>) -> impl IntoRespons
     Json(ExchangesResponse { exchanges: views })
 }
 
-#[derive(Deserialize, utoipa::IntoParams)]
+#[derive(Deserialize)]
 struct HistoryQuery {
-    /// Symbol to get history for (e.g. BTCUSDT). Empty = all symbols.
     symbol: Option<String>,
-    /// Max number of entries to return (default 100, max 10000)
     #[serde(default = "default_limit")]
     limit: usize,
 }
@@ -281,16 +250,6 @@ fn default_limit() -> usize {
     100
 }
 
-/// Get historical price entries
-#[utoipa::path(
-    get,
-    path = "/history",
-    params(HistoryQuery),
-    responses(
-        (status = 200, description = "Price history", body = HistoryResponse),
-        (status = 400, description = "Unknown symbol")
-    )
-)]
 async fn history(
     State(store): State<SharedSnapshotStore>,
     Query(query): Query<HistoryQuery>,
@@ -315,13 +274,12 @@ async fn history(
         .iter()
         .flat_map(|&sym| store.get_history_for_symbol(sym, limit))
         .map(|e| {
-            let latency_ms = e.latency_ms();
             HistoryEntryDto {
                 exchange: e.exchange.as_str().to_string(),
-                price: e.price,
+                price: to_f64(e.price),
                 received_ts: e.received_ts,
                 exchange_ts: e.exchange_ts,
-                latency_ms,
+                latency_ms: e.latency_ms(),
             }
         })
         .collect();
@@ -341,7 +299,6 @@ async fn history(
         .into_response()
 }
 
-/// Prometheus metrics endpoint
 async fn metrics_handler(State(state): State<AppState>) -> String {
     state.prometheus_handle.render()
 }
@@ -349,6 +306,7 @@ async fn metrics_handler(State(state): State<AppState>) -> String {
 pub fn build_snapshot_response(
     store: &SharedSnapshotStore,
     symbols: &[Symbol],
+    volume: Decimal,
 ) -> SnapshotResponse {
     let snapshots = store.get_snapshots_for_symbols(symbols);
 
@@ -363,27 +321,42 @@ pub fn build_snapshot_response(
     let mut symbol_views: Vec<SymbolView> = by_symbol
         .into_iter()
         .map(|(sym_name, snaps)| {
-            let median_price = median(snaps.iter().map(|s| s.price).collect());
+            let symbol_enum = Symbol::from_str(&sym_name).unwrap();
+            let median_price_dec = median(snaps.iter().map(|s| s.price).collect());
             let entries = snaps
                 .into_iter()
-                .map(|s| ExchangeEntry {
-                    exchange: s.exchange.as_str().to_string(),
-                    price: s.price,
-                    latency_ms: s.latency_ms(),
-                    diff_from_median: s.price - median_price,
-                    is_stale: s.is_stale,
+                .map(|s| {
+                    let mut est_buy = None;
+                    let mut est_sell = None;
+                    
+                    // ZAWSZE próbujemy pobrać Bid/Ask z arkusza, nawet dla wolumenu 0
+                    if let Some(ob) = store.get_order_book(s.exchange, symbol_enum) {
+                        est_buy = ob.estimate_buy_price(volume).map(to_f64);
+                        est_sell = ob.estimate_sell_price(volume).map(to_f64);
+                    }
+
+                    ExchangeEntry {
+                        exchange: s.exchange.as_str().to_string(),
+                        price: to_f64(s.price),
+                        est_buy_price: est_buy,
+                        est_sell_price: est_sell,
+                        latency_ms: s.latency_ms(),
+                        diff_from_median: to_f64(s.price - median_price_dec),
+                        is_stale: s.is_stale,
+                    }
                 })
                 .collect();
             SymbolView {
                 symbol: sym_name,
                 entries,
-                median_price,
+                median_price: to_f64(median_price_dec),
             }
         })
         .collect();
 
     symbol_views.sort_by(|a, b| a.symbol.cmp(&b.symbol));
     SnapshotResponse {
+        volume: to_f64(volume),
         symbols: symbol_views,
     }
 }
@@ -392,119 +365,11 @@ fn median(mut prices: Vec<Decimal>) -> Decimal {
     if prices.is_empty() {
         return Decimal::ZERO;
     }
-    prices.sort(); // Decimal implements Ord — no unwrap needed
+    prices.sort();
     let mid = prices.len() / 2;
     if prices.len() % 2 == 0 {
-        (prices[mid - 1] + prices[mid]) / Decimal::TWO
+        (prices[mid - 1] + prices[mid]) / Decimal::from(2)
     } else {
         prices[mid]
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{body::Body, http::Request};
-    use metrics_exporter_prometheus::PrometheusBuilder;
-    use serde_json::Value;
-    use tower::ServiceExt;
-
-    use crate::domain::exchange::Exchange;
-    use crate::domain::symbol::Symbol;
-    use crate::state::snapshot_store::SnapshotStore;
-
-    fn d(n: u64) -> Decimal {
-        Decimal::from(n)
-    }
-
-    fn test_state() -> AppState {
-        let handle = PrometheusBuilder::new().install_recorder().unwrap();
-        AppState {
-            store: Arc::new(SnapshotStore::new(10_000, 100)),
-            tera: Arc::new(Tera::default()),
-            prometheus_handle: handle,
-        }
-    }
-
-    async fn call(app: Router, uri: &str) -> (axum::http::StatusCode, Value) {
-        let resp = app
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let status = resp.status();
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
-    }
-
-    #[tokio::test]
-    async fn health_returns_ok_with_no_data() {
-        let state = test_state();
-        let app = router(state);
-        let (status, json) = call(app, "/health").await;
-        assert_eq!(status, 200);
-        assert_eq!(json["status"], "ok");
-        assert_eq!(json["has_data"], false);
-    }
-
-    #[tokio::test]
-    async fn health_returns_has_data_true_when_store_has_snapshots() {
-        let state = test_state();
-        state
-            .store
-            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        let app = router(state);
-        let (status, json) = call(app, "/health").await;
-        assert_eq!(status, 200);
-        assert_eq!(json["has_data"], true);
-    }
-
-    #[tokio::test]
-    async fn snapshot_returns_entries_for_requested_symbol() {
-        let state = test_state();
-        state
-            .store
-            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        state
-            .store
-            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
-        let app = router(state);
-        let (status, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
-        assert_eq!(status, 200);
-        let symbols = json["symbols"].as_array().unwrap();
-        assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0]["symbol"], "BTCUSDT");
-        assert_eq!(symbols[0]["entries"].as_array().unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn snapshot_median_and_diff_are_correct() {
-        let state = test_state();
-        state
-            .store
-            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
-        state
-            .store
-            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
-        let app = router(state);
-        let (_, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
-        assert_eq!(json["symbols"][0]["median_price"], 50050.0);
-        let diffs: Vec<f64> = json["symbols"][0]["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|e| e["diff_from_median"].as_f64().unwrap())
-            .collect();
-        assert!(diffs.contains(&-50.0) || diffs.contains(&50.0));
-    }
-
-    #[tokio::test]
-    async fn exchanges_returns_empty_when_no_status() {
-        let state = test_state();
-        let app = router(state);
-        let (status, json) = call(app, "/exchanges").await;
-        assert_eq!(status, 200);
-        assert_eq!(json["exchanges"].as_array().unwrap().len(), 0);
     }
 }

@@ -2,8 +2,12 @@ use chrono::{DateTime, TimeZone, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{exchange::Exchange, symbol::Symbol};
-use crate::infra::ws_feed::{WsAdapter, run_ws_feed};
+use crate::domain::{
+    exchange::Exchange,
+    order_book::{OrderBook, OrderBookLevel},
+    symbol::Symbol,
+};
+use crate::infra::ws_feed::{WsAdapter, WsUpdate, run_ws_feed};
 use crate::state::snapshot_store::SharedSnapshotStore;
 
 const WS_URL: &str = "wss://ws.okx.com:8443/ws/v5/public";
@@ -24,7 +28,7 @@ struct SubscribeArg {
 #[derive(Debug, Deserialize)]
 struct OkxMessage {
     arg: Option<OkxArg>,
-    data: Option<Vec<OkxTickerData>>,
+    data: Option<Vec<OkxBookData>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,8 +38,9 @@ struct OkxArg {
 }
 
 #[derive(Debug, Deserialize)]
-struct OkxTickerData {
-    last: String,
+struct OkxBookData {
+    bids: Vec<Vec<String>>,
+    asks: Vec<Vec<String>>,
     ts: String,
 }
 
@@ -48,11 +53,21 @@ impl OkxAdapter {
     fn new(symbols: Vec<Symbol>) -> Self {
         let args: Vec<SubscribeArg> = symbols
             .iter()
-            .map(|s| SubscribeArg { channel: "tickers", inst_id: s.okx_symbol() })
+            .map(|s| SubscribeArg {
+                channel: "books5",
+                inst_id: s.okx_symbol(),
+            })
             .collect();
-        let sub = SubscribeRequest { op: "subscribe", args };
-        let subscribe_json = serde_json::to_string(&sub).expect("subscribe serialization is infallible");
-        Self { symbols, subscribe_json }
+        let sub = SubscribeRequest {
+            op: "subscribe",
+            args,
+        };
+        let subscribe_json =
+            serde_json::to_string(&sub).expect("subscribe serialization is infallible");
+        Self {
+            symbols,
+            subscribe_json,
+        }
     }
 }
 
@@ -69,13 +84,12 @@ impl WsAdapter for OkxAdapter {
         Some(self.subscribe_json.clone())
     }
 
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String> {
+    fn parse_message(&self, text: &str) -> Result<Vec<WsUpdate>, String> {
         if text == "ping" || text == "pong" {
             return Ok(vec![]);
         }
 
-        let msg: OkxMessage = serde_json::from_str(text)
-            .map_err(|e| format!("deserialize: {e}"))?;
+        let msg: OkxMessage = serde_json::from_str(text).map_err(|e| format!("deserialize: {e}"))?;
 
         let inst_id = match &msg.arg {
             Some(a) => a.inst_id.as_str(),
@@ -95,15 +109,40 @@ impl WsAdapter for OkxAdapter {
             .ok_or_else(|| format!("unknown okx instId: {inst_id}"))?;
 
         let entry = &data[0];
-        let price: Decimal = entry.last.parse().map_err(|e| format!("price parse: {e}"))?;
-        let exchange_ts = entry
+        let bids = parse_okx_levels(&entry.bids)?;
+        let asks = parse_okx_levels(&entry.asks)?;
+
+        let ts = entry
             .ts
             .parse::<i64>()
             .ok()
-            .and_then(|ts| Utc.timestamp_millis_opt(ts).single());
+            .and_then(|ts| Utc.timestamp_millis_opt(ts).single())
+            .unwrap_or_else(Utc::now);
 
-        Ok(vec![(symbol, price, exchange_ts)])
+        let ob = OrderBook {
+            exchange: Exchange::Okx,
+            symbol,
+            bids,
+            asks,
+            timestamp: ts,
+        };
+
+        Ok(vec![WsUpdate::OrderBook(ob)])
     }
+}
+
+fn parse_okx_levels(raw: &[Vec<String>]) -> Result<Vec<OrderBookLevel>, String> {
+    raw.iter()
+        .map(|v| {
+            if v.len() < 2 {
+                return Err("invalid okx level format".into());
+            }
+            Ok(OrderBookLevel {
+                price: v[0].parse().map_err(|e| format!("price parse: {e}"))?,
+                quantity: v[1].parse().map_err(|e| format!("qty parse: {e}"))?,
+            })
+        })
+        .collect()
 }
 
 pub async fn run(

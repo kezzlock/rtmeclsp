@@ -7,20 +7,21 @@ use tracing::{error, info, warn};
 
 use crate::domain::{
     exchange::{Exchange, ExchangeStatus},
+    order_book::OrderBook,
     symbol::Symbol,
 };
 use crate::state::snapshot_store::SharedSnapshotStore;
 
-/// Implemented by each WS exchange adapter. All methods are sync — only the runner is async.
+pub enum WsUpdate {
+    Price(Symbol, Decimal, Option<DateTime<Utc>>),
+    OrderBook(OrderBook),
+}
+
 pub trait WsAdapter: Send {
     fn exchange(&self) -> Exchange;
-    /// Full WebSocket URL, including any query params encoding symbol subscriptions.
     fn ws_url(&self) -> String;
-    /// JSON subscribe message to send after connecting. None = subscription baked into URL.
     fn subscribe_message(&self) -> Option<String>;
-    /// Parse one text frame. Returns price updates or Err on unrecoverable parse failure.
-    /// Return Ok(empty vec) for expected non-price messages (heartbeats, status, etc.).
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String>;
+    fn parse_message(&self, text: &str) -> Result<Vec<WsUpdate>, String>;
 }
 
 pub async fn run_ws_feed(
@@ -41,7 +42,10 @@ pub async fn run_ws_feed(
 
         store.update_exchange_status(
             exchange,
-            ExchangeStatus::Reconnecting { attempt, next_retry_at: Utc::now() },
+            ExchangeStatus::Reconnecting {
+                attempt,
+                next_retry_at: Utc::now(),
+            },
         );
 
         match connect_async(&url).await {
@@ -68,7 +72,10 @@ pub async fn run_ws_feed(
                 warn!("{name}: disconnected — {reason}");
                 store.update_exchange_status(
                     exchange,
-                    ExchangeStatus::Disconnected { since: Utc::now(), reason },
+                    ExchangeStatus::Disconnected {
+                        since: Utc::now(),
+                        reason,
+                    },
                 );
             }
             Err(e) => {
@@ -88,11 +95,13 @@ pub async fn run_ws_feed(
             return;
         }
 
-        let next_retry_at =
-            Utc::now() + chrono::Duration::milliseconds(current_backoff as i64);
+        let next_retry_at = Utc::now() + chrono::Duration::milliseconds(current_backoff as i64);
         store.update_exchange_status(
             exchange,
-            ExchangeStatus::Reconnecting { attempt, next_retry_at },
+            ExchangeStatus::Reconnecting {
+                attempt,
+                next_retry_at,
+            },
         );
 
         info!("{name}: retrying in {current_backoff}ms");
@@ -111,14 +120,24 @@ async fn handle_stream<A: WsAdapter>(
 
     while let Some(msg) = ws_stream.next().await {
         match msg {
-            Ok(Message::Text(text)) => match adapter.parse_message(&text) {
-                Ok(updates) => {
-                    for (symbol, price, exchange_ts) in updates {
-                        store.update_snapshot(exchange, symbol, price, exchange_ts);
+            Ok(Message::Text(text)) => {
+                tracing::debug!("{name}: received text: {text}");
+                match adapter.parse_message(&text) {
+                    Ok(updates) => {
+                        for update in updates {
+                            match update {
+                                WsUpdate::Price(symbol, price, ts) => {
+                                    store.update_snapshot(exchange, symbol, price, ts);
+                                }
+                                WsUpdate::OrderBook(ob) => {
+                                    store.update_order_book(ob);
+                                }
+                            }
+                        }
                     }
+                    Err(e) => warn!("{name}: parse error — {e}"),
                 }
-                Err(e) => warn!("{name}: parse error — {e}"),
-            },
+            }
             Ok(Message::Ping(data)) => {
                 if let Err(e) = ws_stream.send(Message::Pong(data)).await {
                     return format!("failed to send pong: {e}");

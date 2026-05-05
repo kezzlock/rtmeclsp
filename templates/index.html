@@ -70,6 +70,40 @@
       text-transform: uppercase;
     }
 
+    .controls {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .volume-input-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .volume-input-wrap label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .volume-input-wrap input {
+      background: transparent;
+      border: none;
+      color: var(--cyan);
+      font-family: inherit;
+      font-size: 13px;
+      width: 60px;
+      outline: none;
+      text-align: right;
+    }
+
     .conn {
       display: flex;
       align-items: center;
@@ -110,7 +144,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
-      min-width: 640px;
+      min-width: 800px;
     }
 
     thead th {
@@ -205,7 +239,7 @@
       vertical-align: top;
       border-left: 1px solid var(--border);
       transition: background .1s;
-      min-width: 130px;
+      min-width: 160px;
     }
 
     td.cell-data.stale {
@@ -220,14 +254,31 @@
       vertical-align: middle;
     }
 
-    .price {
-      font-size: 16px;
+    .price-main {
+      font-size: 15px;
       font-weight: 600;
       color: var(--bright);
       font-variant-numeric: tabular-nums;
       line-height: 1.2;
       letter-spacing: -.01em;
     }
+
+    .slippage-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 6px;
+      font-size: 10px;
+      text-align: right;
+    }
+
+    .slip-val {
+      display: block;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .slip-buy  { color: var(--green); }
+    .slip-sell { color: var(--red); }
 
     .diff {
       font-size: 11px;
@@ -296,11 +347,6 @@
       justify-content: space-between;
     }
 
-    .footer-note {
-      color: var(--muted);
-      font-size: 10px;
-    }
-
     .legend {
       margin-top: 16px;
       display: flex;
@@ -341,11 +387,17 @@
   <div class="header">
     <div class="header-left">
       <div class="logo">RT<span>ME</span></div>
-      <div class="subtitle">Multi-Exchange Spread Dashboard</div>
+      <div class="subtitle">Multi-Exchange L2 Spread Monitor</div>
     </div>
-    <div class="conn" id="conn">
-      <div class="conn-dot"></div>
-      <span class="conn-label">connecting…</span>
+    <div class="controls">
+      <div class="volume-input-wrap">
+        <label for="vol">Volume</label>
+        <input type="number" id="vol" value="0" step="0.01" min="0">
+      </div>
+      <div class="conn" id="conn">
+        <div class="conn-dot"></div>
+        <span class="conn-label">connecting…</span>
+      </div>
     </div>
   </div>
 
@@ -358,12 +410,12 @@
           <th class="col-exch" data-exch="{{ exch }}">{{ exch }}</th>
           {% endfor %}
           <th class="col-median">
-            Median
-            <span class="col-desc">middle price across all exchanges</span>
+            Mid Price
+            <span class="col-desc">avg best bid/ask</span>
           </th>
           <th class="col-spread">
             Spread
-            <span class="col-desc">max − min price across exchanges</span>
+            <span class="col-desc">max − min across exchanges</span>
           </th>
         </tr>
       </thead>
@@ -374,17 +426,13 @@
           {% for cell in row.cells %}
           {% if cell.has_data %}
           <td class="cell-data{% if cell.is_stale %} stale{% endif %}">
-            <div class="price">{{ cell.price | round(precision=2) }}</div>
+            <div class="price-main">{{ cell.price | round(precision=2) }}</div>
             <div class="diff {% if cell.diff > 0.005 %}up{% elif cell.diff < -0.005 %}down{% else %}flat{% endif %}">
               {% if cell.diff > 0.005 %}+{% endif %}{{ cell.diff | round(precision=2) }}
             </div>
-            {% if cell.latency_ms %}
-            {% set a = cell.latency_ms | abs %}
-            <div class="lat {% if a < 50 %}fast{% else %}slow{% endif %}">{{ cell.latency_ms | round(precision=1) }}ms
+            <div class="lat {% if cell.latency_ms and cell.latency_ms < 50 %}fast{% else %}slow{% endif %}">
+                {% if cell.latency_ms %}{{ cell.latency_ms | round(precision=1) }}ms{% else %}—{% endif %}
             </div>
-            {% else %}
-            <div class="lat">—</div>
-            {% endif %}
           </td>
           {% else %}
           <td class="cell-empty">—</td>
@@ -400,25 +448,21 @@
 
   <div class="footer">
     <span id="updated">—</span>
-    <span class="footer-note">kraken = USD · others = USDT</span>
+    <span class="footer-note">L2 Order Book Monitoring active (Depth 5-10)</span>
   </div>
 
   <div class="legend">
     <div class="legend-item">
-      <span class="legend-term">Median</span>
-      <span class="legend-def">middle price — half of exchanges quote above, half below; less skewed than average</span>
+      <span class="legend-term">Price</span>
+      <span class="legend-def">midpoint of best bid/ask from order book</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-term">Buy/Sell</span>
+      <span class="legend-def">estimated VWAP for the selected volume (slippage-aware)</span>
     </div>
     <div class="legend-item">
       <span class="legend-term">Spread</span>
-      <span class="legend-def">highest − lowest price across venues; large spread = arbitrage opportunity</span>
-    </div>
-    <div class="legend-item">
-      <span class="legend-term">Diff</span>
-      <span class="legend-def">exchange price minus median (green = above, red = below)</span>
-    </div>
-    <div class="legend-item">
-      <span class="legend-term">Latency</span>
-      <span class="legend-def">exchange timestamp → server receipt; cyan &lt;50 ms, amber = slow</span>
+      <span class="legend-def">difference between venues; adjust Volume to see liquidity impact</span>
     </div>
   </div>
 
@@ -427,7 +471,6 @@
       binance: '#F0B90B', kraken: '#7B5EA7', mexc: '#1FB58F', okx: '#3370ff', coinbase: '#0052FF'
     };
 
-    // Adaptive decimal places based on price magnitude
     function priceDp(price) {
       const p = Math.abs(price);
       if (p >= 1000) return 2;
@@ -439,6 +482,7 @@
     }
 
     function fmt(p, dp) {
+      if (p == null) return '—';
       const d = dp !== undefined ? dp : priceDp(p);
       return p.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
     }
@@ -450,17 +494,17 @@
     }
 
     function diffThreshold(price) {
-      // half a unit of the last displayed digit
       return 5 * Math.pow(10, -(priceDp(price) + 1));
     }
 
-    // Stable cell IDs allow targeted updates without rebuilding DOM.
     function cellId(sym, exch)    { return `c:${sym}:${exch}`; }
     function medianId(sym)        { return `m:${sym}`; }
     function spreadId(sym)        { return `s:${sym}`; }
 
-    let knownExchanges = null; // tracks column set; rebuild table on change
-    const prevPrice = {};      // sym:exch → last price, for flash detection
+    let knownExchanges = null;
+    const prevPrice = {};
+    let eventSource = null;
+    let currentVolume = 0;
 
     function setText(id, value) {
       const el = document.getElementById(id);
@@ -471,8 +515,8 @@
       const thHtml = `
         <th class="col-pair">Pair</th>
         ${exchanges.map(e => `<th class="col-exch" data-exch="${e}">${e}</th>`).join('')}
-        <th class="col-median">Median<span class="col-desc">middle price across all exchanges</span></th>
-        <th class="col-spread">Spread<span class="col-desc">max − min price across exchanges</span></th>`;
+        <th class="col-median">Mid Price<span class="col-desc">avg best bid/ask</span></th>
+        <th class="col-spread">Spread<span class="col-desc">max − min across exchanges</span></th>`;
       document.getElementById('thead').innerHTML = `<tr>${thHtml}</tr>`;
 
       const rows = data.symbols.map(sym => {
@@ -486,9 +530,15 @@
           const diffStr = fmtDiff(e.diff_from_median, e.price);
           const latCls  = e.latency_ms != null ? (Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow') : '';
           const latTxt  = e.latency_ms != null ? Math.abs(e.latency_ms).toFixed(1) + 'ms' : '—';
+          
           prevPrice[cellId(sym.symbol, exch)] = e.price;
+          
           return `<td id="${cellId(sym.symbol, exch)}" class="cell-data${e.is_stale ? ' stale' : ''}">
-            <div class="price">${fmt(e.price)}</div>
+            <div class="price-main">${fmt(e.price)}</div>
+            <div class="slippage-grid">
+              <span class="slip-label">B:</span><span class="slip-val slip-buy">${fmt(e.est_buy_price)}</span>
+              <span class="slip-label">S:</span><span class="slip-val slip-sell">${fmt(e.est_sell_price)}</span>
+            </div>
             <div class="diff ${diffCls}">${diffStr}</div>
             <div class="lat ${latCls}">${latTxt}</div>
           </td>`;
@@ -523,7 +573,7 @@
           const prev = prevPrice[key];
           if (prev != null && prev !== e.price) {
             td.classList.remove('flash-up', 'flash-down');
-            void td.offsetWidth; // force reflow to restart animation
+            void td.offsetWidth; 
             td.classList.add(e.price > prev ? 'flash-up' : 'flash-down');
           }
           prevPrice[key] = e.price;
@@ -536,8 +586,15 @@
           const latCls  = e.latency_ms != null ? (Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow') : '';
           const latTxt  = e.latency_ms != null ? Math.abs(e.latency_ms).toFixed(1) + 'ms' : '—';
 
-          const [priceEl, diffEl, latEl] = td.children;
-          if (priceEl) priceEl.textContent = fmt(e.price);
+          const mainPriceEl = td.querySelector('.price-main');
+          const buyEl = td.querySelector('.slip-buy');
+          const sellEl = td.querySelector('.slip-sell');
+          const diffEl = td.querySelector('.diff');
+          const latEl = td.querySelector('.lat');
+
+          if (mainPriceEl) mainPriceEl.textContent = fmt(e.price);
+          if (buyEl) buyEl.textContent = fmt(e.est_buy_price);
+          if (sellEl) sellEl.textContent = fmt(e.est_sell_price);
           if (diffEl)  { diffEl.textContent = diffStr; diffEl.className = `diff ${diffCls}`; }
           if (latEl)   { latEl.textContent = latTxt;   latEl.className  = `lat ${latCls}`; }
         });
@@ -564,18 +621,30 @@
         'updated ' + new Date().toLocaleTimeString('en-US', { hour12: false });
     }
 
-    const conn = document.getElementById('conn');
-    const es = new EventSource('/events');
+    function connect() {
+      if (eventSource) eventSource.close();
+      
+      const url = `/events?volume=${currentVolume}`;
+      eventSource = new EventSource(url);
+      
+      const conn = document.getElementById('conn');
+      eventSource.onopen = () => {
+        conn.className = 'conn live';
+        conn.querySelector('.conn-label').textContent = 'live';
+      };
+      eventSource.onerror = () => {
+        conn.className = 'conn dead';
+        conn.querySelector('.conn-label').textContent = 'disconnected';
+      };
+      eventSource.addEventListener('snapshot', e => render(JSON.parse(e.data)));
+    }
 
-    es.onopen = () => {
-      conn.className = 'conn live';
-      conn.querySelector('.conn-label').textContent = 'live';
-    };
-    es.onerror = () => {
-      conn.className = 'conn dead';
-      conn.querySelector('.conn-label').textContent = 'disconnected';
-    };
-    es.addEventListener('snapshot', e => render(JSON.parse(e.data)));
+    document.getElementById('vol').addEventListener('change', (e) => {
+      currentVolume = parseFloat(e.target.value) || 0;
+      connect();
+    });
+
+    connect();
   </script>
 
 </body>

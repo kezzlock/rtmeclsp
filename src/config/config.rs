@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub symbols: Vec<String>,
     pub websocket: WebSocketConfig,
     pub store: StoreConfig,
+    pub rpc: RpcConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -31,6 +32,12 @@ pub struct StoreConfig {
     pub history_capacity: usize,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct RpcConfig {
+    pub ethereum_url: String,
+    pub solana_url: String,
+}
+
 impl AppConfig {
     pub fn load() -> Result<Self, config::ConfigError> {
         config::Config::builder()
@@ -43,6 +50,8 @@ impl AppConfig {
             .set_default("websocket.reconnect_max_attempts", 10)?
             .set_default("store.stale_threshold_ms", 10000)?
             .set_default("store.history_capacity", 1000)?
+            .set_default("rpc.ethereum_url", "https://cloudflare-eth.com")?
+            .set_default("rpc.solana_url", "https://api.mainnet-beta.solana.com")?
             .build()?
             .try_deserialize()
     }

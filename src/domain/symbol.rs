@@ -1,6 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Symbol {
     BtcUsdt,
     EthUsdt,
@@ -48,30 +48,6 @@ impl Symbol {
             .find(|sym| sym.as_str() == upper.as_str())
     }
 
-    pub fn binance_stream(&self) -> &'static str {
-        match self {
-            Symbol::BtcUsdt => "btcusdt@ticker",
-            Symbol::EthUsdt => "ethusdt@ticker",
-            Symbol::BnbUsdt => "bnbusdt@ticker",
-            Symbol::SolUsdt => "solusdt@ticker",
-            Symbol::XrpUsdt => "xrpusdt@ticker",
-            Symbol::AdaUsdt => "adausdt@ticker",
-            Symbol::DogeUsdt => "dogeusdt@ticker",
-            Symbol::AvaxUsdt => "avaxusdt@ticker",
-            Symbol::LinkUsdt => "linkusdt@ticker",
-            Symbol::DotUsdt => "dotusdt@ticker",
-            Symbol::LtcUsdt => "ltcusdt@ticker",
-            Symbol::UniUsdt => "uniusdt@ticker",
-            Symbol::AtomUsdt => "atomusdt@ticker",
-            Symbol::TrxUsdt => "trxusdt@ticker",
-            Symbol::NearUsdt => "nearusdt@ticker",
-        }
-    }
-
-    pub fn mexc_rest_symbol(&self) -> &'static str {
-        self.as_str()
-    }
-
     pub fn kraken_symbol(&self) -> &'static str {
         match self {
             Symbol::BtcUsdt => "BTC/USD",
@@ -109,6 +85,38 @@ impl Symbol {
             Symbol::AtomUsdt => "ATOM-USDT",
             Symbol::TrxUsdt => "TRX-USDT",
             Symbol::NearUsdt => "NEAR-USDT",
+        }
+    }
+
+    pub fn mexc_symbol(&self) -> &'static str {
+        match self {
+            Symbol::BtcUsdt => "BTC_USDT",
+            Symbol::EthUsdt => "ETH_USDT",
+            Symbol::BnbUsdt => "BNB_USDT",
+            Symbol::SolUsdt => "SOL_USDT",
+            Symbol::XrpUsdt => "XRP_USDT",
+            Symbol::AdaUsdt => "ADA_USDT",
+            Symbol::DogeUsdt => "DOGE_USDT",
+            Symbol::AvaxUsdt => "AVAX_USDT",
+            Symbol::LinkUsdt => "LINK_USDT",
+            Symbol::DotUsdt => "DOT_USDT",
+            Symbol::LtcUsdt => "LTC_USDT",
+            Symbol::UniUsdt => "UNI_USDT",
+            Symbol::AtomUsdt => "ATOM_USDT",
+            Symbol::TrxUsdt => "TRX_USDT",
+            Symbol::NearUsdt => "NEAR_USDT",
+        }
+    }
+
+    pub fn uniswap_v3_info(&self) -> Option<(&'static str, &'static str, u32)> {
+        match self {
+            // WBTC / USDT - 0.3% fee
+            Symbol::BtcUsdt => Some(("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 3000)),
+            // WETH / USDT - 0.05% fee (most liquid)
+            Symbol::EthUsdt => Some(("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 500)),
+            // UNI / USDT - 0.3% fee
+            Symbol::UniUsdt => Some(("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 3000)),
+            _ => None,
         }
     }
 }

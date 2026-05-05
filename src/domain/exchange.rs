@@ -1,13 +1,15 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Exchange {
     Binance,
     Mexc,
     Kraken,
     Coinbase,
     Okx,
+    Uniswap,
+    Raydium,
 }
 
 impl Exchange {
@@ -18,11 +20,13 @@ impl Exchange {
             Exchange::Kraken => "kraken",
             Exchange::Coinbase => "coinbase",
             Exchange::Okx => "okx",
+            Exchange::Uniswap => "uniswap",
+            Exchange::Raydium => "raydium",
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ExchangeStatus {
     Connected {

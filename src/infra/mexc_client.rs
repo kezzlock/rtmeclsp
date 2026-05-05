@@ -1,98 +1,130 @@
-use chrono::Utc;
+use chrono::{DateTime, TimeZone, Utc};
 use rust_decimal::Decimal;
 use serde::Deserialize;
-use tokio::time::{sleep, Duration};
-use tracing::{error, info, warn};
 
 use crate::domain::{
-    exchange::{Exchange, ExchangeStatus},
+    exchange::Exchange,
+    order_book::{OrderBook, OrderBookLevel},
     symbol::Symbol,
 };
+use crate::infra::ws_feed::{WsAdapter, WsUpdate, run_ws_feed};
 use crate::state::snapshot_store::SharedSnapshotStore;
 
-// Bulk endpoint — 1 request/s zamiast N×symbols/s, nie grozi rate limitem
-const REST_BULK_URL: &str = "https://api.mexc.com/api/v3/ticker/price";
-const POLL_INTERVAL_MS: u64 = 1_000;
+const WS_BASE: &str = "wss://wbs.mexc.com/ws";
 
-#[derive(Debug, Deserialize)]
-struct MexcTickerPrice {
-    symbol: String,
-    price: String,
+pub struct MexcAdapter {
+    symbols: Vec<Symbol>,
+    subscribe_json: String,
+}
+
+impl MexcAdapter {
+    pub fn new(symbols: Vec<Symbol>) -> Self {
+        let params: Vec<String> = symbols
+            .iter()
+            .map(|s| {
+                format!(
+                    "spot@public.limit.depth.v3.api@{}@5",
+                    s.mexc_symbol()
+                )
+            })
+            .collect();
+
+        let sub = serde_json::json!({
+            "method": "SUBSCRIPTION",
+            "params": params
+        });
+
+        Self {
+            symbols,
+            subscribe_json: sub.to_string(),
+        }
+    }
+}
+
+impl WsAdapter for MexcAdapter {
+    fn exchange(&self) -> Exchange {
+        Exchange::Mexc
+    }
+
+    fn ws_url(&self) -> String {
+        WS_BASE.to_string()
+    }
+
+    fn subscribe_message(&self) -> Option<String> {
+        Some(self.subscribe_json.clone())
+    }
+
+    fn parse_message(&self, text: &str) -> Result<Vec<WsUpdate>, String> {
+        let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("json: {e}"))?;
+        
+        // Sprawdzamy czy to wiadomość z danymi (musi mieć 'c', 'd', 't')
+        let c = match v.get("c").and_then(|v| v.as_str()) {
+            Some(c) => c,
+            None => return Ok(vec![]),
+        };
+        let d = match v.get("d") {
+            Some(d) => d,
+            None => return Ok(vec![]),
+        };
+        let t = v.get("t").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let symbol_str = c.split('@').nth(2).unwrap_or_default();
+        let symbol = self
+            .symbols
+            .iter()
+            .find(|&&s| s.mexc_symbol() == symbol_str)
+            .copied()
+            .ok_or_else(|| format!("unknown mexc symbol: {symbol_str}"))?;
+
+        let bids = parse_mexc_levels(d.get("bids"))?;
+        let asks = parse_mexc_levels(d.get("asks"))?;
+
+        let ts = Utc
+            .timestamp_millis_opt(t as i64)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        let ob = OrderBook {
+            exchange: Exchange::Mexc,
+            symbol,
+            bids,
+            asks,
+            timestamp: ts,
+        };
+
+        Ok(vec![WsUpdate::OrderBook(ob)])
+    }
+}
+
+fn parse_mexc_levels(v: Option<&serde_json::Value>) -> Result<Vec<OrderBookLevel>, String> {
+    let arr = match v.and_then(|v| v.as_array()) {
+        Some(a) => a,
+        None => return Ok(vec![]),
+    };
+
+    arr.iter()
+        .map(|l| {
+            let p = l.get("p").and_then(|v| v.as_str()).ok_or("missing p")?;
+            let v = l.get("v").and_then(|v| v.as_str()).ok_or("missing v")?;
+            Ok(OrderBookLevel {
+                price: p.parse().map_err(|e| format!("price parse: {e}"))?,
+                quantity: v.parse().map_err(|e| format!("qty parse: {e}"))?,
+            })
+        })
+        .collect()
 }
 
 pub async fn run(
     store: SharedSnapshotStore,
     symbols: Vec<Symbol>,
-    _reconnect_backoff_ms: u64,
-    _reconnect_max_attempts: u32,
+    reconnect_backoff_ms: u64,
+    reconnect_max_attempts: u32,
 ) {
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            error!("mexc: failed to build HTTP client — {e}");
-            return;
-        }
-    };
-
-    // Zbuduj zbiór symboli których szukamy (jako &str dla O(1) lookup)
-    let wanted: std::collections::HashSet<&'static str> =
-        symbols.iter().map(|s| s.mexc_rest_symbol()).collect();
-
-    info!("mexc: starting bulk REST polling every {POLL_INTERVAL_MS}ms for {} symbols", symbols.len());
-    store.update_exchange_status(
-        Exchange::Mexc,
-        ExchangeStatus::Connected { since: Utc::now() },
-    );
-
-    loop {
-        match client.get(REST_BULK_URL).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<Vec<MexcTickerPrice>>().await {
-                    Ok(tickers) => {
-                        for ticker in &tickers {
-                            if !wanted.contains(ticker.symbol.as_str()) {
-                                continue;
-                            }
-                            if let Ok(price) = ticker.price.parse::<Decimal>() {
-                                if let Some(&symbol) = symbols
-                                    .iter()
-                                    .find(|&&s| s.mexc_rest_symbol() == ticker.symbol.as_str())
-                                {
-                                    store.update_snapshot(Exchange::Mexc, symbol, price, None);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("mexc: failed to deserialize bulk response — {e}");
-                    }
-                }
-            }
-            Ok(resp) => {
-                warn!("mexc: HTTP {} from bulk endpoint", resp.status());
-                store.update_exchange_status(
-                    Exchange::Mexc,
-                    ExchangeStatus::Disconnected {
-                        since: Utc::now(),
-                        reason: format!("HTTP {}", resp.status()),
-                    },
-                );
-            }
-            Err(e) => {
-                warn!("mexc: request failed — {e}");
-                store.update_exchange_status(
-                    Exchange::Mexc,
-                    ExchangeStatus::Disconnected {
-                        since: Utc::now(),
-                        reason: e.to_string(),
-                    },
-                );
-            }
-        }
-
-        sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
-    }
+    run_ws_feed(
+        MexcAdapter::new(symbols),
+        store,
+        reconnect_backoff_ms,
+        reconnect_max_attempts,
+    )
+    .await;
 }
