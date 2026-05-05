@@ -13,6 +13,8 @@ use axum::{
     },
     routing::get,
 };
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -24,6 +26,7 @@ use crate::{
         ExchangeEntry, ExchangeStatusView, ExchangesResponse, HealthResponse, HistoryEntryDto,
         HistoryResponse, SnapshotResponse, SymbolView,
     },
+    domain::exchange::ExchangeStatus,
     domain::symbol::{ALL_SYMBOLS, Symbol},
     state::snapshot_store::SharedSnapshotStore,
 };
@@ -42,6 +45,7 @@ impl FromRef<AppState> for SharedSnapshotStore {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route("/", get(index))
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
@@ -50,6 +54,23 @@ pub fn router(state: AppState) -> Router {
         .route("/events", get(events))
         .with_state(state)
 }
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(health, snapshot, exchanges, history),
+    components(schemas(
+        HealthResponse, 
+        SnapshotResponse, 
+        SymbolView, 
+        ExchangeEntry, 
+        ExchangesResponse, 
+        ExchangeStatusView, 
+        ExchangeStatus,
+        HistoryResponse,
+        HistoryEntryDto
+    ))
+)]
+struct ApiDoc;
 
 // ── Tera context types (f64 — Tera can't render Decimal natively) ─────────────
 
@@ -172,6 +193,14 @@ async fn events(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// Health check endpoint
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Server is healthy", body = HealthResponse)
+    )
+)]
 async fn health(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
@@ -179,11 +208,21 @@ async fn health(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 struct SnapshotQuery {
+    /// Comma-separated list of symbols (e.g. BTCUSDT,ETHUSDT). Empty = all symbols.
     symbols: Option<String>,
 }
 
+/// Get current price snapshots for requested symbols
+#[utoipa::path(
+    get,
+    path = "/snapshot",
+    params(SnapshotQuery),
+    responses(
+        (status = 200, description = "Current snapshots", body = SnapshotResponse)
+    )
+)]
 async fn snapshot(
     State(store): State<SharedSnapshotStore>,
     Query(query): Query<SnapshotQuery>,
@@ -205,6 +244,14 @@ async fn snapshot(
     (StatusCode::OK, Json(data))
 }
 
+/// Get status of all exchange connections
+#[utoipa::path(
+    get,
+    path = "/exchanges",
+    responses(
+        (status = 200, description = "Exchange statuses", body = ExchangesResponse)
+    )
+)]
 async fn exchanges(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
     let mut views: Vec<ExchangeStatusView> = store
         .get_all_exchange_statuses()
@@ -218,9 +265,11 @@ async fn exchanges(State(store): State<SharedSnapshotStore>) -> impl IntoRespons
     Json(ExchangesResponse { exchanges: views })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 struct HistoryQuery {
+    /// Symbol to get history for (e.g. BTCUSDT). Empty = all symbols.
     symbol: Option<String>,
+    /// Max number of entries to return (default 100, max 10000)
     #[serde(default = "default_limit")]
     limit: usize,
 }
@@ -229,6 +278,16 @@ fn default_limit() -> usize {
     100
 }
 
+/// Get historical price entries
+#[utoipa::path(
+    get,
+    path = "/history",
+    params(HistoryQuery),
+    responses(
+        (status = 200, description = "Price history", body = HistoryResponse),
+        (status = 400, description = "Unknown symbol")
+    )
+)]
 async fn history(
     State(store): State<SharedSnapshotStore>,
     Query(query): Query<HistoryQuery>,
