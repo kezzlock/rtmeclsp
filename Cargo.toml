@@ -4,40 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# async runtime
 tokio = { version = "1", features = ["full"] }
-
-# http server
 axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
-
-# websocket
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
-
-# serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# time
 chrono = { version = "0.4", features = ["serde"] }
-
-# logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# concurrent store (zamiast RwLock<HashMap> — patrz SPEC sekcja 10.1)
 dashmap = "6"
-
-# config loading
 config = "0.14"
-
-# decimal arithmetic — gotowe na post-MVP migrację z f64 (patrz SPEC sekcja 10.2)
 rust_decimal = { version = "1", features = ["serde-float"] }
-
-# HTTP client — używany przez mexc_client do REST polling (WS zablokowany)
 reqwest = { version = "0.12", features = ["json"] }
-
 tera = "1"
 tokio-stream = "0.1"
 

@@ -1,4 +1,5 @@
 use chrono::{DateTime, TimeZone, Utc};
+use rust_decimal::Decimal;
 use serde::Deserialize;
 
 use crate::domain::{exchange::Exchange, symbol::Symbol};
@@ -51,11 +52,11 @@ impl WsAdapter for BinanceAdapter {
         None
     }
 
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, f64, Option<DateTime<Utc>>)>, String> {
+    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String> {
         let msg: BinanceCombinedMessage = serde_json::from_str(text)
             .map_err(|e| format!("deserialize: {e}"))?;
 
-        let price: f64 = msg.data.last_price.parse()
+        let price: Decimal = msg.data.last_price.parse()
             .map_err(|e| format!("price parse: {e}"))?;
 
         let exchange_ts: Option<DateTime<Utc>> = if msg.data.event_time > 0 {

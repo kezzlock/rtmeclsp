@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use futures_util::{SinkExt, StreamExt};
+use rust_decimal::Decimal;
 use tokio::time::{Duration, sleep};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use tracing::{error, info, warn};
@@ -19,7 +20,7 @@ pub trait WsAdapter: Send {
     fn subscribe_message(&self) -> Option<String>;
     /// Parse one text frame. Returns price updates or Err on unrecoverable parse failure.
     /// Return Ok(empty vec) for expected non-price messages (heartbeats, status, etc.).
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, f64, Option<DateTime<Utc>>)>, String>;
+    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String>;
 }
 
 pub async fn run_ws_feed(

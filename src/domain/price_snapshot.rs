@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::Serialize;
 
 use super::{exchange::Exchange, symbol::Symbol};
@@ -7,7 +8,7 @@ use super::{exchange::Exchange, symbol::Symbol};
 pub struct PriceSnapshot {
     pub exchange: Exchange,
     pub symbol: Symbol,
-    pub price: f64,
+    pub price: Decimal,
     pub exchange_ts: Option<DateTime<Utc>>,
     pub received_ts: DateTime<Utc>,
     pub is_stale: bool,
@@ -17,7 +18,7 @@ impl PriceSnapshot {
     pub fn new(
         exchange: Exchange,
         symbol: Symbol,
-        price: f64,
+        price: Decimal,
         exchange_ts: Option<DateTime<Utc>>,
     ) -> Self {
         Self {

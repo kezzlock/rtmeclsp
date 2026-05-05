@@ -427,8 +427,31 @@
       binance: '#F0B90B', kraken: '#7B5EA7', mexc: '#1FB58F', okx: '#3370ff', coinbase: '#0052FF'
     };
 
-    function fmt(p, decimals = 2) {
-      return p.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    // Adaptive decimal places based on price magnitude
+    function priceDp(price) {
+      const p = Math.abs(price);
+      if (p >= 1000) return 2;
+      if (p >= 100)  return 2;
+      if (p >= 10)   return 3;
+      if (p >= 1)    return 4;
+      if (p >= 0.1)  return 5;
+      return 6;
+    }
+
+    function fmt(p, dp) {
+      const d = dp !== undefined ? dp : priceDp(p);
+      return p.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+    }
+
+    function fmtDiff(diff, price) {
+      const dp = priceDp(price);
+      const sign = diff > 0 ? '+' : '';
+      return sign + diff.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+    }
+
+    function diffThreshold(price) {
+      // half a unit of the last displayed digit
+      return 5 * Math.pow(10, -(priceDp(price) + 1));
     }
 
     // Stable cell IDs allow targeted updates without rebuilding DOM.
@@ -458,8 +481,9 @@
         const cells = exchanges.map(exch => {
           const e = byExch[exch];
           if (!e) return `<td class="cell-empty">—</td>`;
-          const diffCls = e.diff_from_median > 0.005 ? 'up' : e.diff_from_median < -0.005 ? 'down' : 'flat';
-          const diffStr = (e.diff_from_median > 0 ? '+' : '') + e.diff_from_median.toFixed(2);
+          const thr     = diffThreshold(e.price);
+          const diffCls = e.diff_from_median > thr ? 'up' : e.diff_from_median < -thr ? 'down' : 'flat';
+          const diffStr = fmtDiff(e.diff_from_median, e.price);
           const latCls  = e.latency_ms != null ? (Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow') : '';
           const latTxt  = e.latency_ms != null ? Math.abs(e.latency_ms).toFixed(1) + 'ms' : '—';
           prevPrice[cellId(sym.symbol, exch)] = e.price;
@@ -506,8 +530,9 @@
 
           td.className = 'cell-data' + (e.is_stale ? ' stale' : '');
 
-          const diffCls = e.diff_from_median > 0.005 ? 'up' : e.diff_from_median < -0.005 ? 'down' : 'flat';
-          const diffStr = (e.diff_from_median > 0 ? '+' : '') + e.diff_from_median.toFixed(2);
+          const thr     = diffThreshold(e.price);
+          const diffCls = e.diff_from_median > thr ? 'up' : e.diff_from_median < -thr ? 'down' : 'flat';
+          const diffStr = fmtDiff(e.diff_from_median, e.price);
           const latCls  = e.latency_ms != null ? (Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow') : '';
           const latTxt  = e.latency_ms != null ? Math.abs(e.latency_ms).toFixed(1) + 'ms' : '—';
 

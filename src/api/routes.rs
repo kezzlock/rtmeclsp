@@ -13,6 +13,8 @@ use axum::{
     },
     routing::get,
 };
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use tera::Tera;
 use tokio_stream::StreamExt as _;
@@ -49,6 +51,8 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+// ── Tera context types (f64 — Tera can't render Decimal natively) ─────────────
+
 #[derive(Serialize)]
 struct PivotContext {
     exchanges: Vec<String>,
@@ -72,6 +76,10 @@ struct PivotCell {
     is_stale: bool,
 }
 
+fn to_f64(d: Decimal) -> f64 {
+    d.to_f64().unwrap_or(0.0)
+}
+
 fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
     let mut exchanges: Vec<String> = snapshot
         .symbols
@@ -92,8 +100,8 @@ fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
                     if let Some(e) = sym.entries.iter().find(|e| &e.exchange == exch) {
                         PivotCell {
                             has_data: true,
-                            price: e.price,
-                            diff: e.diff_from_median,
+                            price: to_f64(e.price),
+                            diff: to_f64(e.diff_from_median),
                             latency_ms: e.latency_ms,
                             is_stale: e.is_stale,
                         }
@@ -109,18 +117,18 @@ fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
                 })
                 .collect();
 
-            let prices: Vec<f64> = sym.entries.iter().map(|e| e.price).collect();
+            let prices: Vec<Decimal> = sym.entries.iter().map(|e| e.price).collect();
             let spread = if prices.len() > 1 {
-                prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
-                    - prices.iter().cloned().fold(f64::INFINITY, f64::min)
+                prices.iter().copied().max().unwrap_or(Decimal::ZERO)
+                    - prices.iter().copied().min().unwrap_or(Decimal::ZERO)
             } else {
-                0.0
+                Decimal::ZERO
             };
 
             PivotRow {
                 symbol: sym.symbol.clone(),
-                median_price: sym.median_price,
-                spread,
+                median_price: to_f64(sym.median_price),
+                spread: to_f64(spread),
                 cells,
             }
         })
@@ -313,14 +321,14 @@ pub fn build_snapshot_response(
     }
 }
 
-fn median(mut prices: Vec<f64>) -> f64 {
+fn median(mut prices: Vec<Decimal>) -> Decimal {
     if prices.is_empty() {
-        return 0.0;
+        return Decimal::ZERO;
     }
-    prices.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    prices.sort(); // Decimal implements Ord — no unwrap needed
     let mid = prices.len() / 2;
     if prices.len() % 2 == 0 {
-        (prices[mid - 1] + prices[mid]) / 2.0
+        (prices[mid - 1] + prices[mid]) / Decimal::TWO
     } else {
         prices[mid]
     }
@@ -336,6 +344,10 @@ mod tests {
     use crate::domain::exchange::Exchange;
     use crate::domain::symbol::Symbol;
     use crate::state::snapshot_store::SnapshotStore;
+
+    fn d(n: u64) -> Decimal {
+        Decimal::from(n)
+    }
 
     fn test_state() -> AppState {
         AppState {
@@ -371,7 +383,7 @@ mod tests {
         let state = test_state();
         state
             .store
-            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
         let app = router(state);
         let (status, json) = call(app, "/health").await;
         assert_eq!(status, 200);
@@ -383,10 +395,10 @@ mod tests {
         let state = test_state();
         state
             .store
-            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
         state
             .store
-            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
+            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
         let app = router(state);
         let (status, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
         assert_eq!(status, 200);
@@ -401,10 +413,10 @@ mod tests {
         let state = test_state();
         state
             .store
-            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
         state
             .store
-            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
+            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
         let app = router(state);
         let (_, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
         assert_eq!(json["symbols"][0]["median_price"], 50050.0);

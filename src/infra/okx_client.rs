@@ -1,4 +1,5 @@
 use chrono::{DateTime, TimeZone, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{exchange::Exchange, symbol::Symbol};
@@ -68,7 +69,7 @@ impl WsAdapter for OkxAdapter {
         Some(self.subscribe_json.clone())
     }
 
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, f64, Option<DateTime<Utc>>)>, String> {
+    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String> {
         if text == "ping" || text == "pong" {
             return Ok(vec![]);
         }
@@ -94,7 +95,7 @@ impl WsAdapter for OkxAdapter {
             .ok_or_else(|| format!("unknown okx instId: {inst_id}"))?;
 
         let entry = &data[0];
-        let price: f64 = entry.last.parse().map_err(|e| format!("price parse: {e}"))?;
+        let price: Decimal = entry.last.parse().map_err(|e| format!("price parse: {e}"))?;
         let exchange_ts = entry
             .ts
             .parse::<i64>()

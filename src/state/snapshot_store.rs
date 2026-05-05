@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use rust_decimal::Decimal;
 
 use crate::domain::{
     exchange::{Exchange, ExchangeStatus},
@@ -12,12 +13,11 @@ use crate::domain::{
 
 pub type SharedSnapshotStore = Arc<SnapshotStore>;
 
-// Pojedynczy wpis w historii — lżejszy niż PriceSnapshot (bez is_stale)
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
     pub exchange: Exchange,
     pub symbol: Symbol,
-    pub price: f64,
+    pub price: Decimal,
     pub received_ts: DateTime<Utc>,
     pub exchange_ts: Option<DateTime<Utc>>,
 }
@@ -33,7 +33,6 @@ impl HistoryEntry {
 pub struct SnapshotStore {
     snapshots: DashMap<(Exchange, Symbol), PriceSnapshot>,
     exchange_status: DashMap<Exchange, ExchangeStatus>,
-    // ring buffer per (Exchange, Symbol) — patrz SPEC roadmapa post-MVP
     history: DashMap<(Exchange, Symbol), VecDeque<HistoryEntry>>,
     history_capacity: usize,
     stale_threshold_ms: u64,
@@ -54,12 +53,11 @@ impl SnapshotStore {
         &self,
         exchange: Exchange,
         symbol: Symbol,
-        price: f64,
+        price: Decimal,
         exchange_ts: Option<DateTime<Utc>>,
     ) {
         let snapshot = PriceSnapshot::new(exchange, symbol, price, exchange_ts);
 
-        // zapis do ring buffer przed insert (klonujemy received_ts ze snapshotu)
         let entry = HistoryEntry {
             exchange,
             symbol,
@@ -113,7 +111,6 @@ impl SnapshotStore {
             .collect()
     }
 
-    // Zwraca ostatnie `limit` wpisów dla danego symbolu, posortowane od najnowszego
     pub fn get_history_for_symbol(&self, symbol: Symbol, limit: usize) -> Vec<HistoryEntry> {
         let mut entries: Vec<HistoryEntry> = self
             .history
@@ -147,6 +144,10 @@ impl SnapshotStore {
 mod tests {
     use super::*;
 
+    fn d(n: u64) -> Decimal {
+        Decimal::from(n)
+    }
+
     fn make_store() -> SnapshotStore {
         SnapshotStore::new(5000, 100)
     }
@@ -154,30 +155,30 @@ mod tests {
     #[test]
     fn update_and_get_snapshot() {
         let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
 
         let snapshots = store.get_snapshots_for_symbols(&[Symbol::BtcUsdt]);
         assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].price, 50000.0);
+        assert_eq!(snapshots[0].price, d(50000));
         assert_eq!(snapshots[0].exchange, Exchange::Binance);
     }
 
     #[test]
     fn newer_snapshot_overwrites_older() {
         let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 51000.0, None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(51000), None);
 
         let snapshots = store.get_snapshots_for_symbols(&[Symbol::BtcUsdt]);
         assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].price, 51000.0);
+        assert_eq!(snapshots[0].price, d(51000));
     }
 
     #[test]
     fn get_snapshots_filters_by_symbol() {
         let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        store.update_snapshot(Exchange::Binance, Symbol::EthUsdt, 3000.0, None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
+        store.update_snapshot(Exchange::Binance, Symbol::EthUsdt, d(3000), None);
 
         let snapshots = store.get_snapshots_for_symbols(&[Symbol::EthUsdt]);
         assert_eq!(snapshots.len(), 1);
@@ -187,8 +188,8 @@ mod tests {
     #[test]
     fn multiple_exchanges_same_symbol() {
         let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
+        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
 
         let snapshots = store.get_snapshots_for_symbols(&[Symbol::BtcUsdt]);
         assert_eq!(snapshots.len(), 2);
@@ -197,38 +198,36 @@ mod tests {
     #[test]
     fn history_accumulates_entries() {
         let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 51000.0, None);
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 52000.0, None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(51000), None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(52000), None);
 
         let history = store.get_history_for_symbol(Symbol::BtcUsdt, 100);
         assert_eq!(history.len(), 3);
-        // posortowane od najnowszego
-        assert_eq!(history[0].price, 52000.0);
-        assert_eq!(history[2].price, 50000.0);
+        assert_eq!(history[0].price, d(52000));
+        assert_eq!(history[2].price, d(50000));
     }
 
     #[test]
     fn history_respects_capacity_limit() {
         let store = SnapshotStore::new(5000, 3);
-        for price in [1.0, 2.0, 3.0, 4.0, 5.0] {
-            store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, price, None);
+        for price in [1u64, 2, 3, 4, 5] {
+            store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(price), None);
         }
         let history = store.get_history_for_symbol(Symbol::BtcUsdt, 100);
         assert_eq!(history.len(), 3);
-        // najstarsze wypadły — zostały 3.0, 4.0, 5.0
-        let prices: Vec<f64> = history.iter().map(|e| e.price).collect();
-        assert!(prices.contains(&5.0));
-        assert!(prices.contains(&4.0));
-        assert!(prices.contains(&3.0));
-        assert!(!prices.contains(&1.0));
+        let prices: Vec<Decimal> = history.iter().map(|e| e.price).collect();
+        assert!(prices.contains(&d(5)));
+        assert!(prices.contains(&d(4)));
+        assert!(prices.contains(&d(3)));
+        assert!(!prices.contains(&d(1)));
     }
 
     #[test]
     fn history_limit_param_truncates_results() {
         let store = make_store();
-        for price in [1.0, 2.0, 3.0, 4.0, 5.0] {
-            store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, price, None);
+        for price in [1u64, 2, 3, 4, 5] {
+            store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(price), None);
         }
         let history = store.get_history_for_symbol(Symbol::BtcUsdt, 2);
         assert_eq!(history.len(), 2);
@@ -237,9 +236,9 @@ mod tests {
     #[test]
     fn history_merges_multiple_exchanges() {
         let store = make_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
-        store.update_snapshot(Exchange::Kraken, Symbol::BtcUsdt, 50200.0, None);
+        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, d(50000), None);
+        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, d(50100), None);
+        store.update_snapshot(Exchange::Kraken, Symbol::BtcUsdt, d(50200), None);
 
         let history = store.get_history_for_symbol(Symbol::BtcUsdt, 100);
         assert_eq!(history.len(), 3);

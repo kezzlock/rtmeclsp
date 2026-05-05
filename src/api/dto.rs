@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::Serialize;
 
 use crate::domain::exchange::ExchangeStatus;
@@ -18,15 +19,15 @@ pub struct SnapshotResponse {
 pub struct SymbolView {
     pub symbol: String,
     pub entries: Vec<ExchangeEntry>,
-    pub median_price: f64,
+    pub median_price: Decimal,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ExchangeEntry {
     pub exchange: String,
-    pub price: f64,
+    pub price: Decimal,
     pub latency_ms: Option<f64>,
-    pub diff_from_median: f64,
+    pub diff_from_median: Decimal,
     pub is_stale: bool,
 }
 
@@ -50,7 +51,7 @@ pub struct HistoryResponse {
 #[derive(Debug, Serialize)]
 pub struct HistoryEntryDto {
     pub exchange: String,
-    pub price: f64,
+    pub price: Decimal,
     pub received_ts: DateTime<Utc>,
     pub exchange_ts: Option<DateTime<Utc>>,
     pub latency_ms: Option<f64>,

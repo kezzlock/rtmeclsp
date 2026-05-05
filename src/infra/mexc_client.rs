@@ -1,4 +1,5 @@
 use chrono::Utc;
+use rust_decimal::Decimal;
 use serde::Deserialize;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
@@ -55,7 +56,7 @@ pub async fn run(
                             if !wanted.contains(ticker.symbol.as_str()) {
                                 continue;
                             }
-                            if let Ok(price) = ticker.price.parse::<f64>() {
+                            if let Ok(price) = ticker.price.parse::<Decimal>() {
                                 if let Some(&symbol) = symbols
                                     .iter()
                                     .find(|&&s| s.mexc_rest_symbol() == ticker.symbol.as_str())

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{exchange::Exchange, symbol::Symbol};
@@ -30,7 +31,7 @@ struct KrakenEnvelope {
 #[derive(Debug, Deserialize)]
 struct KrakenTickerEntry {
     symbol: String,
-    last: f64,
+    last: f64, // Kraken sends a JSON number, not a string
 }
 
 pub struct KrakenAdapter {
@@ -63,7 +64,7 @@ impl WsAdapter for KrakenAdapter {
         Some(self.subscribe_json.clone())
     }
 
-    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, f64, Option<DateTime<Utc>>)>, String> {
+    fn parse_message(&self, text: &str) -> Result<Vec<(Symbol, Decimal, Option<DateTime<Utc>>)>, String> {
         let envelope: KrakenEnvelope = serde_json::from_str(text)
             .map_err(|e| format!("deserialize: {e}"))?;
 
@@ -85,6 +86,10 @@ impl WsAdapter for KrakenAdapter {
             let entry: KrakenTickerEntry = serde_json::from_value(raw.clone())
                 .map_err(|e| format!("ticker entry: {e}"))?;
 
+            // Kraken sends JSON numbers; convert via string to preserve display precision
+            let price: Decimal = entry.last.to_string().parse()
+                .map_err(|e| format!("price parse: {e}"))?;
+
             let symbol = self
                 .symbols
                 .iter()
@@ -92,7 +97,7 @@ impl WsAdapter for KrakenAdapter {
                 .copied()
                 .ok_or_else(|| format!("unknown kraken symbol: {}", entry.symbol))?;
 
-            updates.push((symbol, entry.last, None));
+            updates.push((symbol, price, None));
         }
 
         Ok(updates)

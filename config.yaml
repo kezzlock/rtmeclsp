@@ -31,5 +31,4 @@ websocket:
 
 store:
   stale_threshold_ms: 10000
-  # max wpisów na (exchange, symbol) w ring buffer
   history_capacity: 1000
