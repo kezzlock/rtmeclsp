@@ -4,16 +4,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    Json, Router,
     extract::{FromRef, Query, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{
-        sse::{Event, KeepAlive, Sse},
         IntoResponse,
+        sse::{Event, KeepAlive, Sse},
     },
     routing::get,
-    Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tera::Tera;
 use tokio_stream::StreamExt as _;
 
@@ -22,7 +22,7 @@ use crate::{
         ExchangeEntry, ExchangeStatusView, ExchangesResponse, HealthResponse, HistoryEntryDto,
         HistoryResponse, SnapshotResponse, SymbolView,
     },
-    domain::symbol::{Symbol, ALL_SYMBOLS},
+    domain::symbol::{ALL_SYMBOLS, Symbol},
     state::snapshot_store::SharedSnapshotStore,
 };
 
@@ -32,7 +32,6 @@ pub struct AppState {
     pub tera: Arc<Tera>,
 }
 
-// Pozwala istniejącym handlerom używać State<SharedSnapshotStore> bez zmian
 impl FromRef<AppState> for SharedSnapshotStore {
     fn from_ref(state: &AppState) -> Self {
         Arc::clone(&state.store)
@@ -50,11 +49,92 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-// GET / — renderuje template z aktualnym snapshotem
+#[derive(Serialize)]
+struct PivotContext {
+    exchanges: Vec<String>,
+    rows: Vec<PivotRow>,
+}
+
+#[derive(Serialize)]
+struct PivotRow {
+    symbol: String,
+    median_price: f64,
+    spread: f64,
+    cells: Vec<PivotCell>,
+}
+
+#[derive(Serialize)]
+struct PivotCell {
+    has_data: bool,
+    price: f64,
+    diff: f64,
+    latency_ms: Option<f64>,
+    is_stale: bool,
+}
+
+fn build_pivot(snapshot: &SnapshotResponse) -> PivotContext {
+    let mut exchanges: Vec<String> = snapshot
+        .symbols
+        .iter()
+        .flat_map(|s| s.entries.iter().map(|e| e.exchange.clone()))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    exchanges.sort();
+
+    let rows = snapshot
+        .symbols
+        .iter()
+        .map(|sym| {
+            let cells = exchanges
+                .iter()
+                .map(|exch| {
+                    if let Some(e) = sym.entries.iter().find(|e| &e.exchange == exch) {
+                        PivotCell {
+                            has_data: true,
+                            price: e.price,
+                            diff: e.diff_from_median,
+                            latency_ms: e.latency_ms,
+                            is_stale: e.is_stale,
+                        }
+                    } else {
+                        PivotCell {
+                            has_data: false,
+                            price: 0.0,
+                            diff: 0.0,
+                            latency_ms: None,
+                            is_stale: false,
+                        }
+                    }
+                })
+                .collect();
+
+            let prices: Vec<f64> = sym.entries.iter().map(|e| e.price).collect();
+            let spread = if prices.len() > 1 {
+                prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+                    - prices.iter().cloned().fold(f64::INFINITY, f64::min)
+            } else {
+                0.0
+            };
+
+            PivotRow {
+                symbol: sym.symbol.clone(),
+                median_price: sym.median_price,
+                spread,
+                cells,
+            }
+        })
+        .collect();
+
+    PivotContext { exchanges, rows }
+}
+
 async fn index(State(state): State<AppState>) -> impl IntoResponse {
     let data = build_snapshot_response(&state.store, ALL_SYMBOLS);
+    let pivot = build_pivot(&data);
     let mut ctx = tera::Context::new();
-    ctx.insert("symbols", &data.symbols);
+    ctx.insert("exchanges", &pivot.exchanges);
+    ctx.insert("rows", &pivot.rows);
 
     match state.tera.render("index.html", &ctx) {
         Ok(html) => (
@@ -71,7 +151,6 @@ async fn index(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-// GET /events — SSE stream z danymi snapshotu co 500ms
 async fn events(
     State(store): State<SharedSnapshotStore>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
@@ -192,8 +271,10 @@ async fn history(
         .into_response()
 }
 
-// Wspólna logika snapshotu — używana przez /snapshot i /events (SSE)
-pub fn build_snapshot_response(store: &SharedSnapshotStore, symbols: &[Symbol]) -> SnapshotResponse {
+pub fn build_snapshot_response(
+    store: &SharedSnapshotStore,
+    symbols: &[Symbol],
+) -> SnapshotResponse {
     let snapshots = store.get_snapshots_for_symbols(symbols);
 
     let mut by_symbol: HashMap<String, Vec<_>> = HashMap::new();
@@ -227,7 +308,9 @@ pub fn build_snapshot_response(store: &SharedSnapshotStore, symbols: &[Symbol]) 
         .collect();
 
     symbol_views.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-    SnapshotResponse { symbols: symbol_views }
+    SnapshotResponse {
+        symbols: symbol_views,
+    }
 }
 
 fn median(mut prices: Vec<f64>) -> f64 {
@@ -286,7 +369,9 @@ mod tests {
     #[tokio::test]
     async fn health_returns_has_data_true_when_store_has_snapshots() {
         let state = test_state();
-        state.store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+        state
+            .store
+            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
         let app = router(state);
         let (status, json) = call(app, "/health").await;
         assert_eq!(status, 200);
@@ -296,8 +381,12 @@ mod tests {
     #[tokio::test]
     async fn snapshot_returns_entries_for_requested_symbol() {
         let state = test_state();
-        state.store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        state.store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
+        state
+            .store
+            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+        state
+            .store
+            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
         let app = router(state);
         let (status, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
         assert_eq!(status, 200);
@@ -310,8 +399,12 @@ mod tests {
     #[tokio::test]
     async fn snapshot_median_and_diff_are_correct() {
         let state = test_state();
-        state.store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        state.store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
+        state
+            .store
+            .update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+        state
+            .store
+            .update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
         let app = router(state);
         let (_, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
         assert_eq!(json["symbols"][0]["median_price"], 50050.0);

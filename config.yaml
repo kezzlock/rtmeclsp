@@ -11,6 +11,19 @@ exchanges:
 symbols:
   - BTCUSDT
   - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - ADAUSDT
+  - DOGEUSDT
+  - AVAXUSDT
+  - LINKUSDT
+  - DOTUSDT
+  - LTCUSDT
+  - UNIUSDT
+  - ATOMUSDT
+  - TRXUSDT
+  - NEARUSDT
 
 websocket:
   reconnect_backoff_ms: 1000

@@ -1,209 +1,487 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RTME — Spread Dashboard</title>
   <style>
     :root {
-      --bg:      #0d1117;
-      --surface: #161b22;
-      --border:  #21262d;
-      --text:    #c9d1d9;
-      --muted:   #8b949e;
-      --green:   #3fb950;
-      --red:     #f85149;
-      --yellow:  #d29922;
+      --bg: #09090b;
+      --surface: #111113;
+      --border: #27272a;
+      --border2: #3f3f46;
+      --muted: #52525b;
+      --dim: #71717a;
+      --text: #a1a1aa;
+      --bright: #f4f4f5;
+      --cyan: #22d3ee;
+      --green: #4ade80;
+      --red: #f87171;
+      --amber: #fbbf24;
     }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', monospace;
+      font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
       font-size: 13px;
-      padding: 2rem;
+      min-height: 100vh;
+      padding: 28px 32px;
     }
-    header {
+
+    .header {
       display: flex;
-      justify-content: space-between;
       align-items: baseline;
-      margin-bottom: 1.5rem;
+      justify-content: space-between;
+      margin-bottom: 28px;
+      gap: 16px;
     }
-    h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: -.01em; }
-    #conn { font-size: 11px; color: var(--muted); }
-    #conn.live { color: var(--green); }
-    #conn.dead { color: var(--red); }
 
-    table { width: 100%; border-collapse: collapse; }
-    thead th {
-      padding: 5px 12px;
-      text-align: left;
-      font-size: 10px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: .07em;
-      color: var(--muted);
-      border-bottom: 1px solid var(--border);
+    .header-left {
+      display: flex;
+      align-items: baseline;
+      gap: 20px;
     }
-    tbody td {
-      padding: 7px 12px;
-      border-bottom: 1px solid var(--border);
-      font-variant-numeric: tabular-nums;
-    }
-    .sym-badge {
-      display: inline-block;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 2px 8px;
-      font-size: 11px;
+
+    .logo {
+      font-size: 15px;
       font-weight: 700;
+      letter-spacing: -.02em;
+      color: var(--bright);
     }
-    .exch { color: var(--muted); }
-    .price { font-weight: 600; }
-    .up   { color: var(--green); }
-    .down { color: var(--red); }
-    .flat { color: var(--muted); }
-    .lat       { color: var(--muted); font-size: 11px; }
-    .lat.fast  { color: var(--green); }
-    .lat.slow  { color: var(--yellow); }
-    .stale-tag {
-      background: var(--yellow); color: #000;
-      border-radius: 3px; padding: 1px 5px;
-      font-size: 9px; font-weight: 800;
+
+    .logo span {
+      color: var(--cyan);
     }
-    tr.divider td {
-      padding: 3px 12px;
-      color: var(--muted);
+
+    .subtitle {
       font-size: 11px;
-      border-bottom: 2px solid var(--border);
+      color: var(--muted);
+      letter-spacing: .06em;
+      text-transform: uppercase;
     }
-    @keyframes flash-up   { from { background: rgba(63,185,80,.3); } to { background: transparent; } }
-    @keyframes flash-down { from { background: rgba(248,81,73,.3); } to { background: transparent; } }
-    .flash-up   { animation: flash-up   .6s ease-out; }
-    .flash-down { animation: flash-down .6s ease-out; }
-    #footer { margin-top: 1rem; font-size: 11px; color: var(--muted); }
-  </style>
-</head>
-<body>
 
-<header>
-  <h1>RTME — Multi-Exchange Spread Dashboard</h1>
-  <span id="conn">connecting…</span>
-</header>
+    .conn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
 
-<table>
-  <thead>
-    <tr>
-      <th>Symbol</th>
-      <th>Exchange</th>
-      <th>Price (USD)</th>
-      <th>Diff from Median</th>
-      <th>Latency</th>
-      <th>Status</th>
-    </tr>
-  </thead>
-  <tbody id="tbody">
-    {# initial server-side render — replaced by first SSE event #}
-    {% for sym in symbols %}
-      {% for entry in sym.entries %}
-      <tr>
-        <td>{% if loop.first %}<span class="sym-badge">{{ sym.symbol }}</span>{% endif %}</td>
-        <td class="exch">{{ entry.exchange }}</td>
-        <td class="price">{{ entry.price }}</td>
-        <td>
-          {% set d = entry.diff_from_median %}
-          {% if d > 0.005 %}
-            <span class="up">+{{ d | round(precision=2) }}</span>
-          {% elif d < -0.005 %}
-            <span class="down">{{ d | round(precision=2) }}</span>
-          {% else %}
-            <span class="flat">≈ 0</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if entry.latency_ms %}
-            {% set abs_lat = entry.latency_ms | abs %}
-            <span class="lat {% if abs_lat < 50 %}fast{% else %}slow{% endif %}">
-              {{ entry.latency_ms | round(precision=1) }}ms
-            </span>
-          {% else %}
-            <span class="lat">—</span>
-          {% endif %}
-        </td>
-        <td>{% if entry.is_stale %}<span class="stale-tag">STALE</span>{% else %}live{% endif %}</td>
-      </tr>
-      {% endfor %}
-      <tr class="divider">
-        <td colspan="6">median {{ sym.symbol }}: {{ sym.median_price | round(precision=2) }}</td>
-      </tr>
-    {% endfor %}
-  </tbody>
-</table>
+    .conn-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background .3s;
+    }
 
-<p id="footer">last update: —</p>
+    .conn.live .conn-dot {
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
 
-<script>
-  const prev = {};
+    .conn.live .conn-label {
+      color: var(--green);
+    }
 
-  function fmt(p) {
-    return p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  }
+    .conn.dead .conn-dot {
+      background: var(--red);
+    }
 
-  function fmtDiff(d) {
-    if (Math.abs(d) < 0.005) return '<span class="flat">≈ 0</span>';
-    const cls = d > 0 ? 'up' : 'down';
-    return `<span class="${cls}">${d > 0 ? '+' : ''}${d.toFixed(2)}</span>`;
-  }
+    .conn.dead .conn-label {
+      color: var(--red);
+    }
 
-  function fmtLat(ms) {
-    if (ms == null) return '<span class="lat">—</span>';
-    const cls = Math.abs(ms) < 50 ? 'fast' : 'slow';
-    return `<span class="lat ${cls}">${ms.toFixed(1)}ms</span>`;
-  }
+    .table-wrap {
+      overflow-x: auto;
+    }
 
-  function render(data) {
-    const rows = [];
-    for (const sym of data.symbols) {
-      const entries = [...sym.entries].sort((a, b) => a.exchange.localeCompare(b.exchange));
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 640px;
+    }
 
-      for (let i = 0; i < entries.length; i++) {
-        const e = entries[i];
-        const key = `${sym.symbol}:${e.exchange}`;
-        const old = prev[key];
-        const flash = old == null ? '' : e.price > old ? ' flash-up' : e.price < old ? ' flash-down' : '';
-        prev[key] = e.price;
+    thead th {
+      padding: 10px 20px 10px 20px;
+      text-align: right;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--dim);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
 
-        const symCell = i === 0
-          ? `<td><span class="sym-badge">${sym.symbol}</span></td>`
-          : `<td></td>`;
+    thead th.col-pair {
+      text-align: left;
+      color: var(--muted);
+      width: 120px;
+    }
 
-        rows.push(`<tr${e.is_stale ? ' class="stale"' : ''}>
-          ${symCell}
-          <td class="exch">${e.exchange}</td>
-          <td class="price${flash}">${fmt(e.price)}</td>
-          <td>${fmtDiff(e.diff_from_median)}</td>
-          <td>${fmtLat(e.latency_ms)}</td>
-          <td>${e.is_stale ? '<span class="stale-tag">STALE</span>' : 'live'}</td>
-        </tr>`);
+    thead th.col-median {
+      color: var(--dim);
+      border-left: 1px solid var(--border);
+    }
+
+    thead th.col-spread {
+      color: var(--dim);
+    }
+
+    thead th.col-exch {
+      position: relative;
+      padding-top: 14px;
+    }
+
+    thead th.col-exch::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 12px;
+      right: 12px;
+      height: 2px;
+      border-radius: 0 0 2px 2px;
+      background: var(--border2);
+    }
+
+    thead th[data-exch="binance"]::before {
+      background: #F0B90B;
+    }
+
+    thead th[data-exch="kraken"]::before {
+      background: #7B5EA7;
+    }
+
+    thead th[data-exch="mexc"]::before {
+      background: #1FB58F;
+    }
+
+    thead th[data-exch="okx"]::before {
+      background: #3370ff;
+    }
+
+    thead th[data-exch="coinbase"]::before {
+      background: #0052FF;
+    }
+
+    tbody tr.sym-row {
+      border-bottom: 1px solid var(--border);
+    }
+
+    tbody tr.sym-row:last-child {
+      border-bottom: none;
+    }
+
+    td.cell-pair {
+      padding: 16px 20px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    .pair-badge {
+      display: inline-block;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .03em;
+      color: var(--bright);
+    }
+
+    td.cell-data {
+      padding: 12px 20px;
+      text-align: right;
+      vertical-align: top;
+      border-left: 1px solid var(--border);
+      transition: background .1s;
+      min-width: 130px;
+    }
+
+    td.cell-data.stale {
+      opacity: .4;
+    }
+
+    td.cell-empty {
+      padding: 12px 20px;
+      text-align: right;
+      border-left: 1px solid var(--border);
+      color: var(--muted);
+      vertical-align: middle;
+    }
+
+    .price {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--bright);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+      letter-spacing: -.01em;
+    }
+
+    .diff {
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      margin-top: 3px;
+      line-height: 1;
+    }
+
+    .diff.up {
+      color: var(--green);
+    }
+
+    .diff.down {
+      color: var(--red);
+    }
+
+    .diff.flat {
+      color: var(--muted);
+    }
+
+    .lat {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+      line-height: 1;
+    }
+
+    .lat.fast {
+      color: var(--cyan);
+    }
+
+    .lat.slow {
+      color: var(--amber);
+    }
+
+    td.cell-median {
+      padding: 12px 20px;
+      text-align: right;
+      border-left: 2px solid var(--border2);
+      vertical-align: middle;
+      font-size: 13px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--dim);
+      white-space: nowrap;
+    }
+
+    td.cell-spread {
+      padding: 12px 20px;
+      text-align: right;
+      border-left: 1px solid var(--border);
+      vertical-align: middle;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      color: var(--dim);
+      white-space: nowrap;
+    }
+
+    @keyframes f-up {
+      0% {
+        background: rgba(74, 222, 128, .18)
       }
 
-      rows.push(`<tr class="divider">
-        <td colspan="6">median ${sym.symbol}: ${fmt(sym.median_price)}</td>
-      </tr>`);
+      100% {
+        background: transparent
+      }
     }
 
-    document.getElementById('tbody').innerHTML = rows.join('');
-    document.getElementById('footer').textContent =
-      'last update: ' + new Date().toLocaleTimeString('en-US', {hour12: false});
-  }
+    @keyframes f-down {
+      0% {
+        background: rgba(248, 113, 113, .18)
+      }
 
-  const conn = document.getElementById('conn');
-  const es = new EventSource('/events');
-  es.onopen  = () => { conn.textContent = '● live'; conn.className = 'live'; };
-  es.onerror = () => { conn.textContent = '● disconnected'; conn.className = 'dead'; };
-  es.addEventListener('snapshot', e => render(JSON.parse(e.data)));
-</script>
+      100% {
+        background: transparent
+      }
+    }
+
+    .flash-up {
+      animation: f-up .7s ease-out;
+    }
+
+    .flash-down {
+      animation: f-down .7s ease-out;
+    }
+
+    .footer {
+      margin-top: 20px;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: .04em;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .footer-note {
+      color: var(--border2);
+      font-size: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">RT<span>ME</span></div>
+      <div class="subtitle">Multi-Exchange Spread Dashboard</div>
+    </div>
+    <div class="conn" id="conn">
+      <div class="conn-dot"></div>
+      <span class="conn-label">connecting…</span>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead id="thead">
+        <tr>
+          <th class="col-pair">Pair</th>
+          {% for exch in exchanges %}
+          <th class="col-exch" data-exch="{{ exch }}">{{ exch }}</th>
+          {% endfor %}
+          <th class="col-median">Median</th>
+          <th class="col-spread">Spread</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        {% for row in rows %}
+        <tr class="sym-row">
+          <td class="cell-pair"><span class="pair-badge">{{ row.symbol }}</span></td>
+          {% for cell in row.cells %}
+          {% if cell.has_data %}
+          <td class="cell-data{% if cell.is_stale %} stale{% endif %}">
+            <div class="price">{{ cell.price | round(precision=2) }}</div>
+            <div class="diff {% if cell.diff > 0.005 %}up{% elif cell.diff < -0.005 %}down{% else %}flat{% endif %}">
+              {% if cell.diff > 0.005 %}+{% endif %}{{ cell.diff | round(precision=2) }}
+            </div>
+            {% if cell.latency_ms %}
+            {% set a = cell.latency_ms | abs %}
+            <div class="lat {% if a < 50 %}fast{% else %}slow{% endif %}">{{ cell.latency_ms | round(precision=1) }}ms
+            </div>
+            {% else %}
+            <div class="lat">—</div>
+            {% endif %}
+          </td>
+          {% else %}
+          <td class="cell-empty">—</td>
+          {% endif %}
+          {% endfor %}
+          <td class="cell-median">{{ row.median_price | round(precision=2) }}</td>
+          <td class="cell-spread">{{ row.spread | round(precision=2) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <span id="updated">—</span>
+    <span class="footer-note">kraken = USD · others = USDT</span>
+  </div>
+
+  <script>
+    const EXCH_COLORS = {
+      binance: '#F0B90B', kraken: '#7B5EA7', mexc: '#1FB58F', okx: '#3370ff', coinbase: '#0052FF'
+    };
+    const prev = {};
+
+    function fmt(p, decimals = 2) {
+      return p.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+
+    function render(data) {
+      const exchanges = [...new Set(
+        data.symbols.flatMap(s => s.entries.map(e => e.exchange))
+      )].sort();
+
+      const thHtml = `
+      <th class="col-pair">Pair</th>
+      ${exchanges.map(e => {
+        const color = EXCH_COLORS[e] || '#52525b';
+        return `<th class="col-exch" data-exch="${e}" style="--exch-color:${color}">${e}</th>`;
+      }).join('')}
+      <th class="col-median">Median</th>
+      <th class="col-spread">Spread</th>`;
+      document.getElementById('thead').innerHTML = `<tr>${thHtml}</tr>`;
+
+      document.querySelectorAll('thead th[data-exch]').forEach(th => {
+        const c = EXCH_COLORS[th.dataset.exch] || '#3f3f46';
+        th.style.setProperty('--bar-color', c);
+      });
+
+      const rows = data.symbols.map(sym => {
+        const byExch = Object.fromEntries(sym.entries.map(e => [e.exchange, e]));
+
+        const cells = exchanges.map(exch => {
+          const e = byExch[exch];
+          if (!e) return `<td class="cell-empty">—</td>`;
+
+          const key = `${sym.symbol}:${exch}`;
+          const old = prev[key];
+          const flash = old != null ? (e.price > old ? ' flash-up' : e.price < old ? ' flash-down' : '') : '';
+          prev[key] = e.price;
+
+          const diffCls = e.diff_from_median > 0.005 ? 'up' : e.diff_from_median < -0.005 ? 'down' : 'flat';
+          const diffStr = (e.diff_from_median > 0 ? '+' : '') + e.diff_from_median.toFixed(2);
+
+          let latHtml;
+          if (e.latency_ms != null) {
+            const cls = Math.abs(e.latency_ms) < 50 ? 'fast' : 'slow';
+            latHtml = `<div class="lat ${cls}">${Math.abs(e.latency_ms).toFixed(1)}ms</div>`;
+          } else {
+            latHtml = `<div class="lat">—</div>`;
+          }
+
+          return `<td class="cell-data${flash}${e.is_stale ? ' stale' : ''}">
+          <div class="price">${fmt(e.price)}</div>
+          <div class="diff ${diffCls}">${diffStr}</div>
+          ${latHtml}
+        </td>`;
+        }).join('');
+
+        const prices = sym.entries.map(e => e.price);
+        const spread = prices.length > 1
+          ? (Math.max(...prices) - Math.min(...prices)).toFixed(2)
+          : '—';
+
+        return `<tr class="sym-row">
+        <td class="cell-pair"><span class="pair-badge">${sym.symbol}</span></td>
+        ${cells}
+        <td class="cell-median">${fmt(sym.median_price)}</td>
+        <td class="cell-spread">${spread}</td>
+      </tr>`;
+      }).join('');
+
+      document.getElementById('tbody').innerHTML = rows;
+      document.getElementById('updated').textContent =
+        'updated ' + new Date().toLocaleTimeString('en-US', { hour12: false });
+    }
+
+    const conn = document.getElementById('conn');
+    const es = new EventSource('/events');
+
+    es.onopen = () => {
+      conn.className = 'conn live';
+      conn.querySelector('.conn-label').textContent = 'live';
+    };
+    es.onerror = () => {
+      conn.className = 'conn dead';
+      conn.querySelector('.conn-label').textContent = 'disconnected';
+    };
+    es.addEventListener('snapshot', e => render(JSON.parse(e.data)));
+  </script>
 
 </body>
+
 </html>
