@@ -29,11 +29,19 @@ impl Symbol {
         }
     }
 
-    // MEXC używa podkreślnika zamiast sklejonych liter
+    // MEXC WS używa podkreślnika
     pub fn mexc_symbol(&self) -> &'static str {
         match self {
             Symbol::BtcUsdt => "BTC_USDT",
             Symbol::EthUsdt => "ETH_USDT",
+        }
+    }
+
+    // MEXC REST API używa formatu bez podkreślnika (jak Binance)
+    pub fn mexc_rest_symbol(&self) -> &'static str {
+        match self {
+            Symbol::BtcUsdt => "BTCUSDT",
+            Symbol::EthUsdt => "ETHUSDT",
         }
     }
 }
