@@ -1,6 +1,6 @@
 use chrono::Utc;
 use serde::Deserialize;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
 
 use crate::domain::{
@@ -9,8 +9,6 @@ use crate::domain::{
 };
 use crate::state::snapshot_store::SharedSnapshotStore;
 
-// MEXC WS blokuje subskrypcje dla niektórych IP/regionów.
-// Używamy REST API polling jako fallback — endpoint publiczny, bez auth.
 const REST_BASE: &str = "https://api.mexc.com/api/v3/ticker/price";
 const POLL_INTERVAL_MS: u64 = 1_000;
 
@@ -61,7 +59,10 @@ pub async fn run(
                             }
                         },
                         Err(e) => {
-                            warn!("mexc: failed to deserialize response for {} — {e}", symbol.mexc_rest_symbol());
+                            warn!(
+                                "mexc: failed to deserialize response for {} — {e}",
+                                symbol.mexc_rest_symbol()
+                            );
                         }
                     }
                 }
@@ -80,7 +81,10 @@ pub async fn run(
                     );
                 }
                 Err(e) => {
-                    warn!("mexc: request failed for {} — {e}", symbol.mexc_rest_symbol());
+                    warn!(
+                        "mexc: request failed for {} — {e}",
+                        symbol.mexc_rest_symbol()
+                    );
                     store.update_exchange_status(
                         Exchange::Mexc,
                         ExchangeStatus::Disconnected {

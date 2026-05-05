@@ -27,8 +27,8 @@ pub struct WebSocketConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct StoreConfig {
-    // po przekroczeniu tego progu snapshot dostaje is_stale = true (patrz SPEC 10.3)
     pub stale_threshold_ms: u64,
+    pub history_capacity: usize,
 }
 
 impl AppConfig {
@@ -42,6 +42,7 @@ impl AppConfig {
             .set_default("websocket.reconnect_backoff_ms", 1000)?
             .set_default("websocket.reconnect_max_attempts", 10)?
             .set_default("store.stale_threshold_ms", 10000)?
+            .set_default("store.history_capacity", 1000)?
             .build()?
             .try_deserialize()
     }

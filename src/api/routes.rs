@@ -1,28 +1,88 @@
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::IntoResponse,
+    extract::{FromRef, Query, State},
+    http::{header, StatusCode},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse,
+    },
     routing::get,
     Json, Router,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
+use tera::Tera;
+use tokio_stream::StreamExt as _;
 
 use crate::{
     api::dto::{
-        ExchangeEntry, ExchangeStatusView, ExchangesResponse, HealthResponse, SnapshotResponse,
-        SymbolView,
+        ExchangeEntry, ExchangeStatusView, ExchangesResponse, HealthResponse, HistoryEntryDto,
+        HistoryResponse, SnapshotResponse, SymbolView,
     },
-    domain::symbol::Symbol,
+    domain::symbol::{Symbol, ALL_SYMBOLS},
     state::snapshot_store::SharedSnapshotStore,
 };
 
-pub fn router(store: SharedSnapshotStore) -> Router {
+#[derive(Clone)]
+pub struct AppState {
+    pub store: SharedSnapshotStore,
+    pub tera: Arc<Tera>,
+}
+
+// Pozwala istniejącym handlerom używać State<SharedSnapshotStore> bez zmian
+impl FromRef<AppState> for SharedSnapshotStore {
+    fn from_ref(state: &AppState) -> Self {
+        Arc::clone(&state.store)
+    }
+}
+
+pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(index))
         .route("/health", get(health))
         .route("/snapshot", get(snapshot))
         .route("/exchanges", get(exchanges))
-        .with_state(store)
+        .route("/history", get(history))
+        .route("/events", get(events))
+        .with_state(state)
+}
+
+// GET / — renderuje template z aktualnym snapshotem
+async fn index(State(state): State<AppState>) -> impl IntoResponse {
+    let data = build_snapshot_response(&state.store, ALL_SYMBOLS);
+    let mut ctx = tera::Context::new();
+    ctx.insert("symbols", &data.symbols);
+
+    match state.tera.render("index.html", &ctx) {
+        Ok(html) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("template error: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+// GET /events — SSE stream z danymi snapshotu co 500ms
+async fn events(
+    State(store): State<SharedSnapshotStore>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let interval = tokio::time::interval(Duration::from_millis(500));
+    let stream = tokio_stream::wrappers::IntervalStream::new(interval).map(move |_| {
+        let data = build_snapshot_response(&store, ALL_SYMBOLS);
+        let json = serde_json::to_string(&data).unwrap_or_default();
+        Ok::<Event, Infallible>(Event::default().event("snapshot").data(json))
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn health(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
@@ -48,15 +108,94 @@ async fn snapshot(
         .filter_map(|s| Symbol::from_str(s.trim()))
         .collect();
 
-    let symbols_to_fetch = if requested.is_empty() {
-        crate::domain::symbol::ALL_SYMBOLS.to_vec()
+    let symbols = if requested.is_empty() {
+        ALL_SYMBOLS.to_vec()
     } else {
         requested
     };
 
-    let snapshots = store.get_snapshots_for_symbols(&symbols_to_fetch);
+    let data = build_snapshot_response(&store, &symbols);
+    (StatusCode::OK, Json(data))
+}
 
-    // Grupowanie per symbol
+async fn exchanges(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
+    let mut views: Vec<ExchangeStatusView> = store
+        .get_all_exchange_statuses()
+        .into_iter()
+        .map(|(exchange, status)| ExchangeStatusView {
+            exchange: exchange.as_str().to_string(),
+            status,
+        })
+        .collect();
+    views.sort_by(|a, b| a.exchange.cmp(&b.exchange));
+    Json(ExchangesResponse { exchanges: views })
+}
+
+#[derive(Deserialize)]
+struct HistoryQuery {
+    symbol: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+
+fn default_limit() -> usize {
+    100
+}
+
+async fn history(
+    State(store): State<SharedSnapshotStore>,
+    Query(query): Query<HistoryQuery>,
+) -> impl IntoResponse {
+    let symbols: Vec<Symbol> = match &query.symbol {
+        Some(s) => match Symbol::from_str(s) {
+            Some(sym) => vec![sym],
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": format!("unknown symbol: {s}")})),
+                )
+                    .into_response();
+            }
+        },
+        None => ALL_SYMBOLS.to_vec(),
+    };
+
+    let limit = query.limit.clamp(1, 10_000);
+
+    let mut all_entries: Vec<HistoryEntryDto> = symbols
+        .iter()
+        .flat_map(|&sym| store.get_history_for_symbol(sym, limit))
+        .map(|e| {
+            let latency_ms = e.latency_ms();
+            HistoryEntryDto {
+                exchange: e.exchange.as_str().to_string(),
+                price: e.price,
+                received_ts: e.received_ts,
+                exchange_ts: e.exchange_ts,
+                latency_ms,
+            }
+        })
+        .collect();
+
+    all_entries.sort_by(|a, b| b.received_ts.cmp(&a.received_ts));
+    all_entries.truncate(limit);
+
+    let symbol_label = query.symbol.unwrap_or_else(|| "ALL".to_string());
+
+    (
+        StatusCode::OK,
+        Json(HistoryResponse {
+            symbol: symbol_label,
+            entries: all_entries,
+        }),
+    )
+        .into_response()
+}
+
+// Wspólna logika snapshotu — używana przez /snapshot i /events (SSE)
+pub fn build_snapshot_response(store: &SharedSnapshotStore, symbols: &[Symbol]) -> SnapshotResponse {
+    let snapshots = store.get_snapshots_for_symbols(symbols);
+
     let mut by_symbol: HashMap<String, Vec<_>> = HashMap::new();
     for snap in &snapshots {
         by_symbol
@@ -69,7 +208,6 @@ async fn snapshot(
         .into_iter()
         .map(|(sym_name, snaps)| {
             let median_price = median(snaps.iter().map(|s| s.price).collect());
-
             let entries = snaps
                 .into_iter()
                 .map(|s| ExchangeEntry {
@@ -80,7 +218,6 @@ async fn snapshot(
                     is_stale: s.is_stale,
                 })
                 .collect();
-
             SymbolView {
                 symbol: sym_name,
                 entries,
@@ -90,23 +227,7 @@ async fn snapshot(
         .collect();
 
     symbol_views.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-
-    (StatusCode::OK, Json(SnapshotResponse { symbols: symbol_views }))
-}
-
-async fn exchanges(State(store): State<SharedSnapshotStore>) -> impl IntoResponse {
-    let statuses = store.get_all_exchange_statuses();
-    let mut views: Vec<ExchangeStatusView> = statuses
-        .into_iter()
-        .map(|(exchange, status)| ExchangeStatusView {
-            exchange: exchange.as_str().to_string(),
-            status,
-        })
-        .collect();
-
-    views.sort_by(|a, b| a.exchange.cmp(&b.exchange));
-
-    Json(ExchangesResponse { exchanges: views })
+    SnapshotResponse { symbols: symbol_views }
 }
 
 fn median(mut prices: Vec<f64>) -> f64 {
@@ -127,34 +248,35 @@ mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
     use serde_json::Value;
-    use std::sync::Arc;
     use tower::ServiceExt;
 
-    use crate::state::snapshot_store::SnapshotStore;
     use crate::domain::exchange::Exchange;
     use crate::domain::symbol::Symbol;
+    use crate::state::snapshot_store::SnapshotStore;
 
-    fn test_store() -> SharedSnapshotStore {
-        Arc::new(SnapshotStore::new(10_000))
+    fn test_state() -> AppState {
+        AppState {
+            store: Arc::new(SnapshotStore::new(10_000, 100)),
+            tera: Arc::new(Tera::default()),
+        }
     }
 
     async fn call(app: Router, uri: &str) -> (axum::http::StatusCode, Value) {
-        let response = app
+        let resp = app
             .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
             .await
             .unwrap();
-        let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        let json: Value = serde_json::from_slice(&bytes).unwrap();
-        (status, json)
+        (status, serde_json::from_slice(&bytes).unwrap())
     }
 
     #[tokio::test]
     async fn health_returns_ok_with_no_data() {
-        let store = test_store();
-        let app = router(store);
+        let state = test_state();
+        let app = router(state);
         let (status, json) = call(app, "/health").await;
         assert_eq!(status, 200);
         assert_eq!(json["status"], "ok");
@@ -163,9 +285,9 @@ mod tests {
 
     #[tokio::test]
     async fn health_returns_has_data_true_when_store_has_snapshots() {
-        let store = test_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        let app = router(store);
+        let state = test_state();
+        state.store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+        let app = router(state);
         let (status, json) = call(app, "/health").await;
         assert_eq!(status, 200);
         assert_eq!(json["has_data"], true);
@@ -173,32 +295,29 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_returns_entries_for_requested_symbol() {
-        let store = test_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
-        let app = router(store);
+        let state = test_state();
+        state.store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+        state.store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
+        let app = router(state);
         let (status, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
         assert_eq!(status, 200);
         let symbols = json["symbols"].as_array().unwrap();
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0]["symbol"], "BTCUSDT");
-        let entries = symbols[0]["entries"].as_array().unwrap();
-        assert_eq!(entries.len(), 2);
+        assert_eq!(symbols[0]["entries"].as_array().unwrap().len(), 2);
     }
 
     #[tokio::test]
     async fn snapshot_median_and_diff_are_correct() {
-        let store = test_store();
-        store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
-        store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
-        let app = router(store);
+        let state = test_state();
+        state.store.update_snapshot(Exchange::Binance, Symbol::BtcUsdt, 50000.0, None);
+        state.store.update_snapshot(Exchange::Mexc, Symbol::BtcUsdt, 50100.0, None);
+        let app = router(state);
         let (_, json) = call(app, "/snapshot?symbols=BTCUSDT").await;
-        let sym = &json["symbols"][0];
-        // mediana z [50000, 50100] = 50050
-        assert_eq!(sym["median_price"], 50050.0);
-        // diff_from_median dla każdej giełdy
-        let entries = sym["entries"].as_array().unwrap();
-        let diffs: Vec<f64> = entries
+        assert_eq!(json["symbols"][0]["median_price"], 50050.0);
+        let diffs: Vec<f64> = json["symbols"][0]["entries"]
+            .as_array()
+            .unwrap()
             .iter()
             .map(|e| e["diff_from_median"].as_f64().unwrap())
             .collect();
@@ -207,8 +326,8 @@ mod tests {
 
     #[tokio::test]
     async fn exchanges_returns_empty_when_no_status() {
-        let store = test_store();
-        let app = router(store);
+        let state = test_state();
+        let app = router(state);
         let (status, json) = call(app, "/exchanges").await;
         assert_eq!(status, 200);
         assert_eq!(json["exchanges"].as_array().unwrap().len(), 0);

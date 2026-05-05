@@ -22,7 +22,6 @@ impl Exchange {
     }
 }
 
-// Pełny stan giełdy — patrz SPEC sekcja 10.4
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ExchangeStatus {

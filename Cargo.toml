@@ -38,5 +38,8 @@ rust_decimal = { version = "1", features = ["serde-float"] }
 # HTTP client — używany przez mexc_client do REST polling (WS zablokowany)
 reqwest = { version = "0.12", features = ["json"] }
 
+tera = "1"
+tokio-stream = "0.1"
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

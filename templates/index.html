@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RTME — Spread Dashboard</title>
+  <style>
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #21262d;
+      --text:    #c9d1d9;
+      --muted:   #8b949e;
+      --green:   #3fb950;
+      --red:     #f85149;
+      --yellow:  #d29922;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', monospace;
+      font-size: 13px;
+      padding: 2rem;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 1.5rem;
+    }
+    h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: -.01em; }
+    #conn { font-size: 11px; color: var(--muted); }
+    #conn.live { color: var(--green); }
+    #conn.dead { color: var(--red); }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      padding: 5px 12px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    tbody td {
+      padding: 7px 12px;
+      border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+    .sym-badge {
+      display: inline-block;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .exch { color: var(--muted); }
+    .price { font-weight: 600; }
+    .up   { color: var(--green); }
+    .down { color: var(--red); }
+    .flat { color: var(--muted); }
+    .lat       { color: var(--muted); font-size: 11px; }
+    .lat.fast  { color: var(--green); }
+    .lat.slow  { color: var(--yellow); }
+    .stale-tag {
+      background: var(--yellow); color: #000;
+      border-radius: 3px; padding: 1px 5px;
+      font-size: 9px; font-weight: 800;
+    }
+    tr.divider td {
+      padding: 3px 12px;
+      color: var(--muted);
+      font-size: 11px;
+      border-bottom: 2px solid var(--border);
+    }
+    @keyframes flash-up   { from { background: rgba(63,185,80,.3); } to { background: transparent; } }
+    @keyframes flash-down { from { background: rgba(248,81,73,.3); } to { background: transparent; } }
+    .flash-up   { animation: flash-up   .6s ease-out; }
+    .flash-down { animation: flash-down .6s ease-out; }
+    #footer { margin-top: 1rem; font-size: 11px; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>RTME — Multi-Exchange Spread Dashboard</h1>
+  <span id="conn">connecting…</span>
+</header>
+
+<table>
+  <thead>
+    <tr>
+      <th>Symbol</th>
+      <th>Exchange</th>
+      <th>Price (USD)</th>
+      <th>Diff from Median</th>
+      <th>Latency</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody id="tbody">
+    {# initial server-side render — replaced by first SSE event #}
+    {% for sym in symbols %}
+      {% for entry in sym.entries %}
+      <tr>
+        <td>{% if loop.first %}<span class="sym-badge">{{ sym.symbol }}</span>{% endif %}</td>
+        <td class="exch">{{ entry.exchange }}</td>
+        <td class="price">{{ entry.price }}</td>
+        <td>
+          {% set d = entry.diff_from_median %}
+          {% if d > 0.005 %}
+            <span class="up">+{{ d | round(precision=2) }}</span>
+          {% elif d < -0.005 %}
+            <span class="down">{{ d | round(precision=2) }}</span>
+          {% else %}
+            <span class="flat">≈ 0</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if entry.latency_ms %}
+            {% set abs_lat = entry.latency_ms | abs %}
+            <span class="lat {% if abs_lat < 50 %}fast{% else %}slow{% endif %}">
+              {{ entry.latency_ms | round(precision=1) }}ms
+            </span>
+          {% else %}
+            <span class="lat">—</span>
+          {% endif %}
+        </td>
+        <td>{% if entry.is_stale %}<span class="stale-tag">STALE</span>{% else %}live{% endif %}</td>
+      </tr>
+      {% endfor %}
+      <tr class="divider">
+        <td colspan="6">median {{ sym.symbol }}: {{ sym.median_price | round(precision=2) }}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p id="footer">last update: —</p>
+
+<script>
+  const prev = {};
+
+  function fmt(p) {
+    return p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  function fmtDiff(d) {
+    if (Math.abs(d) < 0.005) return '<span class="flat">≈ 0</span>';
+    const cls = d > 0 ? 'up' : 'down';
+    return `<span class="${cls}">${d > 0 ? '+' : ''}${d.toFixed(2)}</span>`;
+  }
+
+  function fmtLat(ms) {
+    if (ms == null) return '<span class="lat">—</span>';
+    const cls = Math.abs(ms) < 50 ? 'fast' : 'slow';
+    return `<span class="lat ${cls}">${ms.toFixed(1)}ms</span>`;
+  }
+
+  function render(data) {
+    const rows = [];
+    for (const sym of data.symbols) {
+      const entries = [...sym.entries].sort((a, b) => a.exchange.localeCompare(b.exchange));
+
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        const key = `${sym.symbol}:${e.exchange}`;
+        const old = prev[key];
+        const flash = old == null ? '' : e.price > old ? ' flash-up' : e.price < old ? ' flash-down' : '';
+        prev[key] = e.price;
+
+        const symCell = i === 0
+          ? `<td><span class="sym-badge">${sym.symbol}</span></td>`
+          : `<td></td>`;
+
+        rows.push(`<tr${e.is_stale ? ' class="stale"' : ''}>
+          ${symCell}
+          <td class="exch">${e.exchange}</td>
+          <td class="price${flash}">${fmt(e.price)}</td>
+          <td>${fmtDiff(e.diff_from_median)}</td>
+          <td>${fmtLat(e.latency_ms)}</td>
+          <td>${e.is_stale ? '<span class="stale-tag">STALE</span>' : 'live'}</td>
+        </tr>`);
+      }
+
+      rows.push(`<tr class="divider">
+        <td colspan="6">median ${sym.symbol}: ${fmt(sym.median_price)}</td>
+      </tr>`);
+    }
+
+    document.getElementById('tbody').innerHTML = rows.join('');
+    document.getElementById('footer').textContent =
+      'last update: ' + new Date().toLocaleTimeString('en-US', {hour12: false});
+  }
+
+  const conn = document.getElementById('conn');
+  const es = new EventSource('/events');
+  es.onopen  = () => { conn.textContent = '● live'; conn.className = 'live'; };
+  es.onerror = () => { conn.textContent = '● disconnected'; conn.className = 'dead'; };
+  es.addEventListener('snapshot', e => render(JSON.parse(e.data)));
+</script>
+
+</body>
+</html>

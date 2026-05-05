@@ -10,6 +10,7 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::{
+    api::routes::AppState,
     config::config::AppConfig,
     domain::symbol::Symbol,
     state::snapshot_store::SnapshotStore,
@@ -22,7 +23,10 @@ async fn main() {
     let cfg = AppConfig::load().expect("failed to load config");
     info!("config loaded: port={}, exchanges={:?}", cfg.http.port, cfg.exchanges.enabled);
 
-    let store = Arc::new(SnapshotStore::new(cfg.store.stale_threshold_ms));
+    let store = Arc::new(SnapshotStore::new(
+        cfg.store.stale_threshold_ms,
+        cfg.store.history_capacity,
+    ));
 
     let symbols: Vec<Symbol> = cfg
         .symbols
@@ -54,13 +58,33 @@ async fn main() {
                         .await;
                 });
             }
+            "kraken" => {
+                tokio::spawn(async move {
+                    infra::kraken_client::run(store_clone, symbols_clone, backoff, max_attempts)
+                        .await;
+                });
+            }
+            "okx" => {
+                tokio::spawn(async move {
+                    infra::okx_client::run(store_clone, symbols_clone, backoff, max_attempts)
+                        .await;
+                });
+            }
             other => {
                 tracing::warn!("unknown exchange in config: {other}, skipping");
             }
         }
     }
 
-    let router = api::routes::router(Arc::clone(&store));
+    let tera = tera::Tera::new("templates/**/*.html")
+        .expect("failed to load templates");
+
+    let app_state = AppState {
+        store: Arc::clone(&store),
+        tera: Arc::new(tera),
+    };
+
+    let router = api::routes::router(app_state);
     let addr = format!("0.0.0.0:{}", cfg.http.port);
     let listener = TcpListener::bind(&addr).await.expect("failed to bind");
     info!("listening on {addr}");

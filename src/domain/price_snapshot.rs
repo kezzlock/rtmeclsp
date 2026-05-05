@@ -7,11 +7,9 @@ use super::{exchange::Exchange, symbol::Symbol};
 pub struct PriceSnapshot {
     pub exchange: Exchange,
     pub symbol: Symbol,
-    // f64 akceptowalny w MVP — patrz SPEC sekcja 10.2
     pub price: f64,
     pub exchange_ts: Option<DateTime<Utc>>,
     pub received_ts: DateTime<Utc>,
-    // flaga ustawiana przez store/API layer — patrz SPEC sekcja 10.3
     pub is_stale: bool,
 }
 

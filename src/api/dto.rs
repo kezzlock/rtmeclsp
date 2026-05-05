@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::domain::exchange::ExchangeStatus;
@@ -38,4 +39,19 @@ pub struct ExchangesResponse {
 pub struct ExchangeStatusView {
     pub exchange: String,
     pub status: ExchangeStatus,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistoryResponse {
+    pub symbol: String,
+    pub entries: Vec<HistoryEntryDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistoryEntryDto {
+    pub exchange: String,
+    pub price: f64,
+    pub received_ts: DateTime<Utc>,
+    pub exchange_ts: Option<DateTime<Utc>>,
+    pub latency_ms: Option<f64>,
 }

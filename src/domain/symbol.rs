@@ -37,11 +37,24 @@ impl Symbol {
         }
     }
 
-    // MEXC REST API używa formatu bez podkreślnika (jak Binance)
     pub fn mexc_rest_symbol(&self) -> &'static str {
         match self {
             Symbol::BtcUsdt => "BTCUSDT",
             Symbol::EthUsdt => "ETHUSDT",
+        }
+    }
+
+    pub fn kraken_symbol(&self) -> &'static str {
+        match self {
+            Symbol::BtcUsdt => "BTC/USD",
+            Symbol::EthUsdt => "ETH/USD",
+        }
+    }
+
+    pub fn okx_symbol(&self) -> &'static str {
+        match self {
+            Symbol::BtcUsdt => "BTC-USDT",
+            Symbol::EthUsdt => "ETH-USDT",
         }
     }
 }
