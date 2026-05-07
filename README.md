@@ -4,6 +4,18 @@
 
 Live price dashboard that aggregates tickers from Binance, Kraken, MEXC and OKX, computes cross-exchange spread and median, and streams updates to the browser every 500 ms via SSE.
 
+## The Problem
+Crypto liquidity is spread across dozens of platforms, each with different latencies and price points. Keeping track of the "global" price and exchange stability usually requires multiple tabs and heavy browser resources. **rtmeclsp** solves this by consolidating the most critical market health metrics into a single, lightweight, and ultra-fast SSE-powered pivot table.
+
+## Why rtmeclsp?
+In a fragmented crypto market, price discovery happens at different speeds across exchanges. **rtmeclsp** was built to visualize these micro-inefficiencies in real-time. By aggregating high-frequency data into a single, low-latency dashboard, it allows traders and developers to:
+- Spot cross-exchange arbitrage opportunities instantly.
+- Monitor exchange-specific latency and "lag" during high volatility.
+- Establish a "true" market price using real-time median calculations.
+
+## Motivation
+Standard trading interfaces are often bloated or limited to a single exchange. **rtmeclsp** explores the limits of high-throughput data processing in Rust. The goal was to create a "zero-compromise" monitoring tool that handles multiple concurrent WebSocket streams, performs atomic updates using lock-free data structures (`DashMap`), and maintains sub-second synchronization with the frontend—all while keeping resource usage minimal.
+
 ![Dashboard screenshot](docs/dashboard.png)
 
 ---
