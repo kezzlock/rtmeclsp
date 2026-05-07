@@ -1,5 +1,4 @@
-use chrono::{DateTime, TimeZone, Utc};
-use rust_decimal::Decimal;
+use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
@@ -89,7 +88,8 @@ impl WsAdapter for OkxAdapter {
             return Ok(vec![]);
         }
 
-        let msg: OkxMessage = serde_json::from_str(text).map_err(|e| format!("deserialize: {e}"))?;
+        let msg: OkxMessage =
+            serde_json::from_str(text).map_err(|e| format!("deserialize: {e}"))?;
 
         let inst_id = match &msg.arg {
             Some(a) => a.inst_id.as_str(),

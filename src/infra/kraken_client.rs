@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +37,7 @@ struct KrakenBookEntry {
     symbol: String,
     bids: Vec<KrakenLevel>,
     asks: Vec<KrakenLevel>,
-    timestamp: String,
+    _timestamp: String,
 }
 
 #[derive(Debug, Deserialize)]

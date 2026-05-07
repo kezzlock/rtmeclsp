@@ -285,7 +285,7 @@ async fn history(
         })
         .collect();
 
-    all_entries.sort_by(|a, b| b.received_ts.cmp(&a.received_ts));
+    all_entries.sort_by_key(|b| std::cmp::Reverse(b.received_ts));
     all_entries.truncate(limit);
 
     let symbol_label = query.symbol.unwrap_or_else(|| "ALL".to_string());
@@ -368,7 +368,7 @@ fn median(mut prices: Vec<Decimal>) -> Decimal {
     }
     prices.sort();
     let mid = prices.len() / 2;
-    if prices.len() % 2 == 0 {
+    if prices.len().is_multiple_of(2) {
         (prices[mid - 1] + prices[mid]) / Decimal::from(2)
     } else {
         prices[mid]

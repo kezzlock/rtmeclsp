@@ -1,6 +1,4 @@
-use chrono::{DateTime, TimeZone, Utc};
-use rust_decimal::Decimal;
-use serde::Deserialize;
+use chrono::{TimeZone, Utc};
 
 use crate::domain::{
     exchange::Exchange,

@@ -1,5 +1,3 @@
-use chrono::{DateTime, TimeZone, Utc};
-use rust_decimal::Decimal;
 use serde::Deserialize;
 
 use crate::domain::{
@@ -21,7 +19,7 @@ struct BinanceCombinedMessage {
 #[derive(Debug, Deserialize)]
 struct BinanceDepthData {
     #[serde(rename = "lastUpdateId")]
-    last_update_id: u64,
+    _last_update_id: u64,
     bids: Vec<[String; 2]>,
     asks: Vec<[String; 2]>,
 }
@@ -57,8 +55,8 @@ impl WsAdapter for BinanceAdapter {
     }
 
     fn parse_message(&self, text: &str) -> Result<Vec<WsUpdate>, String> {
-        let msg: BinanceCombinedMessage = serde_json::from_str(text)
-            .map_err(|e| format!("deserialize: {e}"))?;
+        let msg: BinanceCombinedMessage =
+            serde_json::from_str(text).map_err(|e| format!("deserialize: {e}"))?;
 
         let symbol_str = msg.stream.split('@').next().unwrap_or_default();
         let symbol = self

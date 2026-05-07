@@ -82,10 +82,7 @@ impl SnapshotStore {
             received_ts: snapshot.received_ts,
             exchange_ts: snapshot.exchange_ts,
         };
-        let mut ring = self
-            .history
-            .entry((exchange, symbol))
-            .or_insert_with(VecDeque::new);
+        let mut ring = self.history.entry((exchange, symbol)).or_default();
         if ring.len() >= self.history_capacity {
             ring.pop_front();
         }
@@ -104,7 +101,10 @@ impl SnapshotStore {
         }
 
         // Merge logic
-        let mut entry = self.order_books.entry((ob.exchange, ob.symbol)).or_insert_with(|| ob.clone());
+        let mut entry = self
+            .order_books
+            .entry((ob.exchange, ob.symbol))
+            .or_insert_with(|| ob.clone());
         if entry.timestamp < ob.timestamp {
             entry.merge(ob.clone());
         }
@@ -113,7 +113,12 @@ impl SnapshotStore {
 
         if let (Some(b), Some(a)) = (merged_ob.bids.first(), merged_ob.asks.first()) {
             let mid = (b.price + a.price) / Decimal::from(2);
-            self.update_snapshot(merged_ob.exchange, merged_ob.symbol, mid, Some(merged_ob.timestamp));
+            self.update_snapshot(
+                merged_ob.exchange,
+                merged_ob.symbol,
+                mid,
+                Some(merged_ob.timestamp),
+            );
         }
 
         self.order_books.insert((ob.exchange, ob.symbol), merged_ob);
@@ -183,7 +188,7 @@ impl SnapshotStore {
             .flat_map(|e| e.value().iter().cloned().collect::<Vec<_>>())
             .collect();
 
-        entries.sort_by(|a, b| b.received_ts.cmp(&a.received_ts));
+        entries.sort_by_key(|b| std::cmp::Reverse(b.received_ts));
         entries.truncate(limit);
         entries
     }

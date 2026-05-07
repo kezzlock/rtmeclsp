@@ -13,6 +13,7 @@ use crate::domain::{
 use crate::state::snapshot_store::SharedSnapshotStore;
 
 pub enum WsUpdate {
+    #[allow(dead_code)]
     Price(Symbol, Decimal, Option<DateTime<Utc>>),
     OrderBook(OrderBook),
 }

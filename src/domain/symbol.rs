@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[allow(clippy::enum_variant_names)]
 pub enum Symbol {
     BtcUsdt,
     EthUsdt,
@@ -111,11 +112,23 @@ impl Symbol {
     pub fn uniswap_v3_info(&self) -> Option<(&'static str, &'static str, u32)> {
         match self {
             // WBTC / USDT - 0.3% fee
-            Symbol::BtcUsdt => Some(("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 3000)),
+            Symbol::BtcUsdt => Some((
+                "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+                "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                3000,
+            )),
             // WETH / USDT - 0.05% fee (most liquid)
-            Symbol::EthUsdt => Some(("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 500)),
+            Symbol::EthUsdt => Some((
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                500,
+            )),
             // UNI / USDT - 0.3% fee
-            Symbol::UniUsdt => Some(("0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 3000)),
+            Symbol::UniUsdt => Some((
+                "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+                "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                3000,
+            )),
             _ => None,
         }
     }

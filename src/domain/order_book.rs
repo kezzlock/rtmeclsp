@@ -118,8 +118,8 @@ fn merge_levels(current: &mut Vec<OrderBookLevel>, updates: Vec<OrderBookLevel>,
 
     // Sort
     if reverse {
-        current.sort_by(|a, b| b.price.cmp(&a.price));
+        current.sort_by_key(|b| std::cmp::Reverse(b.price));
     } else {
-        current.sort_by(|a, b| a.price.cmp(&b.price));
+        current.sort_by_key(|a| a.price);
     }
 }
